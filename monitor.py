@@ -61,6 +61,7 @@ class AnalyzedArticle:
 
 SEEN_PATH = 'data/seen_urls.json'
 RESULTS_PATH = 'data/results.json'
+DAILY_RESULTS_DIR = 'data/daily_results'
 DIGEST_PATH = 'data/telegram_digest.txt'
 RAW_REVIEW_DIGEST_PATH = 'data/telegram_raw_review.txt'
 SOURCE_CHECK_REPORT_PATH = 'data/source_check_report.json'
@@ -535,6 +536,42 @@ def save_results(items: List[Dict[str, Any]]):
 
     if save_supabase_state(SUPABASE_RESULTS_KEY, items):
         print(f"Supabase analysis_results 저장: {len(items)}개")
+
+
+def save_daily_results(items: List[Dict[str, Any]], run_id: str) -> Optional[str]:
+    if not items:
+        return None
+
+    run_date = run_id[:8]
+    os.makedirs(DAILY_RESULTS_DIR, exist_ok=True)
+    path = os.path.join(DAILY_RESULTS_DIR, f"results_{run_date}.json")
+
+    existing: List[Dict[str, Any]] = []
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                loaded = json.load(f)
+            if isinstance(loaded, list):
+                existing = loaded
+        except Exception:
+            existing = []
+
+    merged = {item.get('url'): item for item in existing if item.get('url')}
+    for item in items:
+        url = item.get('url')
+        if url:
+            merged[url] = item
+
+    daily_items = list(merged.values())
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(daily_items, f, ensure_ascii=False, indent=2)
+
+    daily_key = f"{SUPABASE_RESULTS_KEY}_{run_date}"
+    if save_supabase_state(daily_key, daily_items):
+        print(f"Supabase {daily_key} 저장: {len(daily_items)}개")
+
+    return path
+
 
 def build_source_check_record(
     src: SourceConfig,
@@ -2138,6 +2175,7 @@ def main():
             "failed_sources": FAILED_SOURCES_PATH,
             "seen_urls": SEEN_PATH,
             "results": RESULTS_PATH,
+            "daily_results_dir": DAILY_RESULTS_DIR,
             "telegram_digest": DIGEST_PATH,
         },
         "summary": {
@@ -2161,6 +2199,8 @@ def main():
             "source_check_report_saved": False,
             "failed_sources_yaml_saved": False,
             "results_saved": False,
+            "daily_results_saved": False,
+            "daily_results_path": None,
             "digest_saved": False,
             "telegram_send_enabled": cfg.get("telegram", {}).get("send_enabled", False),
             "telegram_review_send_enabled": cfg.get("telegram", {}).get("review_send_enabled", False),
@@ -2354,6 +2394,10 @@ def main():
         merged[item.url] = asdict(item)
     save_results(list(merged.values()))
     run_log["summary"]["results_saved"] = True
+    daily_path = save_daily_results([asdict(item) for item in analyzed_items], run_id)
+    if daily_path:
+        run_log["summary"]["daily_results_saved"] = True
+        run_log["summary"]["daily_results_path"] = daily_path
 
     digest_text = build_telegram_digest(
         analyzed_items,

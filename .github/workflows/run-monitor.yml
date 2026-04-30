@@ -48,6 +48,7 @@ jobs:
           path: |
             data/raw_articles.json
             data/results.json
+            data/daily_results/*.json
             data/source_check_report.json
             data/telegram_digest.txt
             data/telegram_raw_review.txt
