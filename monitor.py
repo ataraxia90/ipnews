@@ -581,6 +581,28 @@ def save_run_log(log: Dict[str, Any]) -> str:
     return path
 
 
+def decode_html_response(resp, default_encoding: str = "utf-8") -> str:
+    content = resp.content
+    head = content[:4096].decode("ascii", errors="ignore")
+    match = re.search(r'charset=["\']?([\w.-]+)|encoding=["\']?([\w.-]+)', head, re.I)
+    declared = next((g for g in match.groups() if g), None) if match else None
+
+    if declared:
+        normalized = declared.lower().replace("_", "-")
+        if normalized in ("shift-jis", "shift_jis", "sjis", "windows-31j", "cp932"):
+            return content.decode("cp932", errors="replace")
+        try:
+            return content.decode(declared, errors="replace")
+        except LookupError:
+            pass
+
+    encoding = getattr(resp, "encoding", None) or default_encoding
+    try:
+        return content.decode(encoding, errors="replace")
+    except LookupError:
+        return content.decode(default_encoding, errors="replace")
+
+
 def fetch_playwright(source: SourceConfig, timeout: int = 30000) -> List[Article]:
     print(f"[DEBUG] {source.name} 수집 시작 (Playwright 렌더링 모드)")
 
@@ -1004,7 +1026,7 @@ def fetch_html_list(source: SourceConfig, timeout: int = 20) -> List[Article]:
     if "patentsalon.com" in source.monitor_url:
         raw_html = resp.content.decode("cp932", errors="replace")
     else:
-        raw_html = resp.text
+        raw_html = decode_html_response(resp)
     if "CNIPA" in source.name or "cnipa.gov.cn" in source.monitor_url:
         raw_html = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', raw_html, flags=re.DOTALL)
         record_fragments = re.findall(r'<record>\s*(.*?)\s*</record>', raw_html, flags=re.DOTALL | re.IGNORECASE)
