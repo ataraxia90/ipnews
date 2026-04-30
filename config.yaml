@@ -22,7 +22,7 @@ telegram:
   send_enabled: true
   review_send_enabled: true
   digest_send_enabled: true
-  max_messages: 5
+  max_messages: 20
   timeout_seconds: 10
 
 sources:
