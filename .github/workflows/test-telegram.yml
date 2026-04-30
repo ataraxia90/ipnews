@@ -11,9 +11,10 @@ jobs:
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_REVIEW_CHAT_ID: ${{ secrets.TELEGRAM_REVIEW_CHAT_ID }}
+      TELEGRAM_DIGEST_CHAT_ID: ${{ secrets.TELEGRAM_DIGEST_CHAT_ID }}
 
     steps:
-      - name: Send test message
+      - name: Send test messages
         run: |
           python - <<'PY'
           import os
@@ -24,41 +25,51 @@ jobs:
           import json
 
           token = os.environ.get("TELEGRAM_BOT_TOKEN")
-          chat_id = os.environ.get("TELEGRAM_REVIEW_CHAT_ID")
+          targets = [
+              ("review", os.environ.get("TELEGRAM_REVIEW_CHAT_ID")),
+              ("digest", os.environ.get("TELEGRAM_DIGEST_CHAT_ID")),
+          ]
 
           if not token:
               print("Missing TELEGRAM_BOT_TOKEN")
               sys.exit(1)
-          if not chat_id:
-              print("Missing TELEGRAM_REVIEW_CHAT_ID")
+
+          missing = [name for name, chat_id in targets if not chat_id]
+          if missing:
+              print("Missing chat id secret(s): " + ", ".join(missing))
               sys.exit(1)
 
-          text = f"IP Monitor Telegram delivery test from GitHub Actions\n{time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}"
           url = f"https://api.telegram.org/bot{token}/sendMessage"
-          payload = json.dumps({
-              "chat_id": chat_id,
-              "text": text,
-              "disable_web_page_preview": True,
-          }).encode("utf-8")
 
-          req = urllib.request.Request(
-              url,
-              data=payload,
-              headers={"Content-Type": "application/json"},
-              method="POST",
-          )
+          for name, chat_id in targets:
+              text = (
+                  f"IP Monitor Telegram {name} channel delivery test from GitHub Actions\n"
+                  f"{time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}"
+              )
+              payload = json.dumps({
+                  "chat_id": chat_id,
+                  "text": text,
+                  "disable_web_page_preview": True,
+              }).encode("utf-8")
 
-          try:
-              with urllib.request.urlopen(req, timeout=20) as resp:
-                  body = resp.read().decode("utf-8", errors="replace")
-                  print(resp.status)
+              req = urllib.request.Request(
+                  url,
+                  data=payload,
+                  headers={"Content-Type": "application/json"},
+                  method="POST",
+              )
+
+              try:
+                  with urllib.request.urlopen(req, timeout=20) as resp:
+                      body = resp.read().decode("utf-8", errors="replace")
+                      print(name, resp.status)
+                      print(body)
+              except urllib.error.HTTPError as e:
+                  body = e.read().decode("utf-8", errors="replace")
+                  print(name, e.code)
                   print(body)
-          except urllib.error.HTTPError as e:
-              body = e.read().decode("utf-8", errors="replace")
-              print(e.code)
-              print(body)
-              sys.exit(1)
-          except Exception as e:
-              print(type(e).__name__, str(e))
-              sys.exit(1)
+                  sys.exit(1)
+              except Exception as e:
+                  print(name, type(e).__name__, str(e))
+                  sys.exit(1)
           PY
