@@ -561,6 +561,8 @@ def build_source_check_record(
         "monitor_url": src.monitor_url,
         "status": status,
         "count": len(articles),
+        "max_items": src.max_items,
+        "max_items_reached": len(articles) >= src.max_items if src.max_items else False,
         "error": error,
         "sample_titles": [a.title for a in articles[:3]],
         "sample_urls": [a.url for a in articles[:3]],
@@ -2182,6 +2184,8 @@ def main():
             "mode": src.mode,
             "monitor_url": src.monitor_url,
             "status": None,
+            "max_items": src.max_items,
+            "max_items_reached": False,
             "fetched_count": 0,
             "new_count": 0,
             "seen_skipped_count": 0,
@@ -2197,6 +2201,7 @@ def main():
                 build_source_check_record(src, arts)
             )
             source_log["fetched_count"] = len(arts)
+            source_log["max_items_reached"] = len(arts) >= src.max_items if src.max_items else False
             source_log["status"] = "ok" if arts else "empty"
             source_log["sample_articles"] = [
                 {"title": a.title, "url": a.url, "published": a.published}
@@ -2233,6 +2238,8 @@ def main():
             seen.add(a.url)
 
         print(f'{progress_label} 신규 기사 후보: {len(fresh)}개')
+        if source_log["max_items_reached"]:
+            print(f'{progress_label} max_items 도달: {source_log["fetched_count"]}/{src.max_items}개 수집')
         source_log["new_count"] = len(fresh)
         source_log["elapsed_seconds"] = round(time.time() - source_started, 3)
         run_log["sources"].append(source_log)
