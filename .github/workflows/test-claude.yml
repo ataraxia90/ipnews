@@ -1,0 +1,68 @@
+name: Test Claude API
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-claude:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Anthropic SDK
+        run: pip install "anthropic>=0.40.0"
+
+      - name: Call Claude
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import anthropic
+
+          api_key = os.environ.get("ANTHROPIC_API_KEY")
+          if not api_key:
+              print("Missing ANTHROPIC_API_KEY")
+              sys.exit(1)
+
+          client = anthropic.Anthropic(api_key=api_key)
+
+          try:
+              message = client.messages.create(
+                  model="claude-3-5-haiku-latest",
+                  max_tokens=64,
+                  temperature=0,
+                  messages=[
+                      {
+                          "role": "user",
+                          "content": "Reply with exactly: Claude API OK",
+                      }
+                  ],
+              )
+          except Exception as e:
+              print(f"Claude API test failed: {type(e).__name__}: {e}")
+              sys.exit(1)
+
+          text = "".join(
+              block.text for block in message.content
+              if getattr(block, "type", None) == "text"
+          ).strip()
+
+          print("Claude response:", text)
+          if "Claude API OK" not in text:
+              print("Claude API responded, but the content was unexpected.")
+              sys.exit(1)
+
+          print("Claude API test succeeded.")
+          PY
