@@ -57,7 +57,7 @@ jobs:
 
           try:
               message = client.messages.create(
-                  model="claude-3-5-haiku-latest",
+                  model="claude-sonnet-4-6",
                   max_tokens=64,
                   temperature=0,
                   messages=[
