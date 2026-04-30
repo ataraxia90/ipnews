@@ -1,0 +1,17 @@
+.env
+venv/
+__pycache__/
+*.pyc
+.idea/
+debug_*.png
+test.py
+test_html_debug.py
+test_html_debug_report.txt
+
+data/failed_sources.yaml
+data/seen_urls.json
+data/seen_urls_old.json
+data/raw_articles.json
+data/source_check_report.json
+data/telegram_raw_review.txt
+data/run_logs/
