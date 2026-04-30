@@ -12,6 +12,7 @@ jobs:
     timeout-minutes: 60
 
     env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       PYTHONUTF8: "1"
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_REVIEW_CHAT_ID: ${{ secrets.TELEGRAM_REVIEW_CHAT_ID }}

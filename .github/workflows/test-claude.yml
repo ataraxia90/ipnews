@@ -9,6 +9,7 @@ jobs:
     timeout-minutes: 5
 
     env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_DIGEST_CHAT_ID: ${{ secrets.TELEGRAM_DIGEST_CHAT_ID }}
