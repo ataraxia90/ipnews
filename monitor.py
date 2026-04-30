@@ -1917,7 +1917,7 @@ def main():
 
     # =========================================================
     # [추가 1] 테스트용 스위치 변수 설정
-    SKIP_ANALYSIS = True  # True로 설정하면 Claude 분석 및 텔레그램 발송을 건너뜁니다.
+    SKIP_ANALYSIS = False  # True로 설정하면 Claude 분석 및 digest 텔레그램 발송을 건너뜁니다.
     RAW_RESULTS_PATH = 'data/raw_articles.json'  # 수집 원본만 저장할 파일 경로
     # =========================================================
 
