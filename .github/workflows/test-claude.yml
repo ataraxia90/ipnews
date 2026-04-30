@@ -10,6 +10,8 @@ jobs:
 
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_DIGEST_CHAT_ID: ${{ secrets.TELEGRAM_DIGEST_CHAT_ID }}
 
     steps:
       - name: Checkout
@@ -24,19 +26,33 @@ jobs:
       - name: Install Anthropic SDK
         run: pip install "anthropic>=0.40.0"
 
-      - name: Call Claude
+      - name: Call Claude and send Telegram result
         run: |
           python - <<'PY'
+          import json
           import os
           import sys
+          import time
+          import urllib.error
+          import urllib.request
           import anthropic
 
           api_key = os.environ.get("ANTHROPIC_API_KEY")
+          telegram_token = os.environ.get("TELEGRAM_BOT_TOKEN")
+          digest_chat_id = os.environ.get("TELEGRAM_DIGEST_CHAT_ID")
+
           if not api_key:
               print("Missing ANTHROPIC_API_KEY")
               sys.exit(1)
+          if not telegram_token:
+              print("Missing TELEGRAM_BOT_TOKEN")
+              sys.exit(1)
+          if not digest_chat_id:
+              print("Missing TELEGRAM_DIGEST_CHAT_ID")
+              sys.exit(1)
 
           client = anthropic.Anthropic(api_key=api_key)
+          test_started = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
 
           try:
               message = client.messages.create(
@@ -50,19 +66,62 @@ jobs:
                       }
                   ],
               )
+              claude_ok = True
+              error_text = ""
           except Exception as e:
-              print(f"Claude API test failed: {type(e).__name__}: {e}")
+              claude_ok = False
+              error_text = f"{type(e).__name__}: {e}"
+              text = ""
+
+          if claude_ok:
+              text = "".join(
+                  block.text for block in message.content
+                  if getattr(block, "type", None) == "text"
+              ).strip()
+              claude_ok = "Claude API OK" in text
+              if not claude_ok:
+                  error_text = f"Unexpected response: {text}"
+
+          status = "SUCCESS" if claude_ok else "FAIL"
+          telegram_text = (
+              f"IP Monitor Claude API test: {status}\n"
+              f"{test_started}\n"
+              f"Response: {text or '-'}"
+          )
+          if error_text:
+              telegram_text += f"\nError: {error_text[:500]}"
+
+          url = f"https://api.telegram.org/bot{telegram_token}/sendMessage"
+          payload = json.dumps({
+              "chat_id": digest_chat_id,
+              "text": telegram_text,
+              "disable_web_page_preview": True,
+          }).encode("utf-8")
+
+          req = urllib.request.Request(
+              url,
+              data=payload,
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+
+          try:
+              with urllib.request.urlopen(req, timeout=20) as resp:
+                  body = resp.read().decode("utf-8", errors="replace")
+                  print("Telegram", resp.status)
+                  print(body)
+          except urllib.error.HTTPError as e:
+              body = e.read().decode("utf-8", errors="replace")
+              print("Telegram", e.code)
+              print(body)
+              sys.exit(1)
+          except Exception as e:
+              print("Telegram", type(e).__name__, str(e))
               sys.exit(1)
 
-          text = "".join(
-              block.text for block in message.content
-              if getattr(block, "type", None) == "text"
-          ).strip()
+          print("Claude response:", text or "-")
+          print(f"Claude API test {status.lower()}.")
 
-          print("Claude response:", text)
-          if "Claude API OK" not in text:
-              print("Claude API responded, but the content was unexpected.")
+          if not claude_ok:
               sys.exit(1)
-
-          print("Claude API test succeeded.")
           PY
