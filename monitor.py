@@ -388,8 +388,11 @@ def supabase_config() -> Optional[Dict[str, str]]:
     key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
     if not url or not key:
         return None
+    url = url.rstrip('/')
+    if url.endswith('/rest/v1'):
+        url = url[:-len('/rest/v1')]
     return {
-        "url": url.rstrip('/'),
+        "url": url,
         "key": key,
     }
 
