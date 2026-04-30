@@ -39,6 +39,12 @@ Playwright 소스를 사용할 경우:
 playwright install chromium
 ```
 
+Playwright는 기본적으로 headless 모드로 실행됩니다. 로컬에서 브라우저 창을 보고 디버깅하려면 `.env`에 아래 값을 추가합니다.
+
+```env
+PLAYWRIGHT_HEADLESS=false
+```
+
 Linux/VPS 기준:
 
 ```bash

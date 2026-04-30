@@ -587,9 +587,9 @@ def fetch_playwright(source: SourceConfig, timeout: int = 30000) -> List[Article
     html_content = ""
     # 🚨 [수정] 두 줄을 한 줄로 합쳐서 Playwright 전체에 스텔스를 씌웁니다!
     with Stealth().use_sync(sync_playwright()) as p:
+        headless = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
         browser = p.chromium.launch(
-            headless=False,
-            channel="chrome",
+            headless=headless,
             args=["--disable-blink-features=AutomationControlled"],
             ignore_default_args=["--enable-automation"]
         )
