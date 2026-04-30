@@ -619,9 +619,17 @@ def extract_date_from_text(text: str) -> Optional[str]:
     if not text:
         return None
 
+    normalized_text = (
+        text.translate(str.maketrans("０１２３４５６７８９．／－", "0123456789./-"))
+        .replace("Ｒ", "R")
+        .replace("\u2003", " ")
+        .replace("\u3000", " ")
+    )
+
     patterns = [
         r'(?P<y>20\d{2})[-/.](?P<m>\d{1,2})[-/.](?P<d>\d{1,2})',
         r'(?P<y>20\d{2})年(?P<m>\d{1,2})月(?P<d>\d{1,2})日',
+        r'(?P<d>\d{1,2})/(?P<m>\d{1,2})/(?P<y>20\d{2})',
         r'(?P<d>\d{1,2})\s+(?P<mon>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?P<y>20\d{2})',
         r'(?P<mon>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?P<d>\d{1,2}),?\s+(?P<y>20\d{2})',
     ]
@@ -632,13 +640,18 @@ def extract_date_from_text(text: str) -> Optional[str]:
     }
 
     for pattern in patterns:
-        m = re.search(pattern, text, re.I)
+        m = re.search(pattern, normalized_text, re.I)
         if not m:
             continue
         parts = m.groupdict()
         month = parts.get("m") or month_names.get(parts.get("mon", "").lower())
         if month:
             return normalize_date_parts(parts["y"], str(month), parts["d"])
+
+    era = re.search(r'(?:令和|R)\s*(?P<y>\d{1,2})\s*[.年]\s*(?P<m>\d{1,2})\s*[.月]\s*(?P<d>\d{1,2})', normalized_text, re.I)
+    if era:
+        year = 2018 + int(era.group("y"))
+        return normalize_date_parts(str(year), era.group("m"), era.group("d"))
 
     return None
 
@@ -683,8 +696,59 @@ def extract_date_from_context(node, url: str = "") -> Optional[str]:
     return None
 
 
+DETAIL_DATE_SOURCE_PATTERNS = [
+    "IPRdaily",
+    "베트남 지식재산청",
+]
+
+
+def should_fetch_detail_date(source_name: str) -> bool:
+    return any(pattern in source_name for pattern in DETAIL_DATE_SOURCE_PATTERNS)
+
+
+def fetch_detail_date(source_name: str, url: str, timeout: int = 20) -> Optional[str]:
+    if not should_fetch_detail_date(source_name):
+        return None
+
+    try:
+        resp = curl_requests.get(
+            url,
+            impersonate="chrome120",
+            timeout=timeout,
+            verify=False,
+        )
+        if not resp.ok:
+            return None
+    except Exception:
+        return None
+
+    soup = BeautifulSoup(decode_html_response(resp), 'html.parser')
+
+    for selector in [
+        'meta[property="article:published_time"]',
+        'meta[name="article:published_time"]',
+        'meta[property="og:updated_time"]',
+        'time',
+        '.date',
+        '.post-date',
+        '.entry-date',
+        '.published',
+        '.metadata-info',
+    ]:
+        for node in soup.select(selector):
+            text = node.get('content') or node.get('datetime') or node.get_text(" ", strip=True)
+            date = extract_date_from_text(text)
+            if date:
+                return date
+
+    return extract_date_from_text(soup.get_text(" ", strip=True)[:3000])
+
+
 def decode_html_response(resp, default_encoding: str = "utf-8") -> str:
     content = resp.content
+    if content.startswith(b'\xef\xbb\xbf'):
+        return content.decode("utf-8-sig", errors="replace")
+
     head = content[:4096].decode("ascii", errors="ignore")
     match = re.search(r'charset=["\']?([\w.-]+)|encoding=["\']?([\w.-]+)', head, re.I)
     declared = next((g for g in match.groups() if g), None) if match else None
@@ -1209,6 +1273,8 @@ def fetch_html_list(source: SourceConfig, timeout: int = 20) -> List[Article]:
 
         articles = []
         for title, url, published in items:
+            if not published:
+                published = fetch_detail_date(source.name, url, timeout=timeout)
             articles.append(Article(
                 source=source.name,
                 region=source.region,
@@ -1312,6 +1378,8 @@ def fetch_html_list(source: SourceConfig, timeout: int = 20) -> List[Article]:
 
     articles = []
     for title, url, published in items:
+        if not published:
+            published = fetch_detail_date(source.name, url, timeout=timeout)
         articles.append(Article(
             source=source.name,
             region=source.region,
