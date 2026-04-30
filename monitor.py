@@ -611,6 +611,78 @@ def save_run_log(log: Dict[str, Any]) -> str:
     return path
 
 
+def normalize_date_parts(year: str, month: str, day: str) -> str:
+    return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+
+
+def extract_date_from_text(text: str) -> Optional[str]:
+    if not text:
+        return None
+
+    patterns = [
+        r'(?P<y>20\d{2})[-/.](?P<m>\d{1,2})[-/.](?P<d>\d{1,2})',
+        r'(?P<y>20\d{2})年(?P<m>\d{1,2})月(?P<d>\d{1,2})日',
+        r'(?P<d>\d{1,2})\s+(?P<mon>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?P<y>20\d{2})',
+        r'(?P<mon>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?P<d>\d{1,2}),?\s+(?P<y>20\d{2})',
+    ]
+    month_names = {
+        "january": 1, "february": 2, "march": 3, "april": 4,
+        "may": 5, "june": 6, "july": 7, "august": 8,
+        "september": 9, "october": 10, "november": 11, "december": 12,
+    }
+
+    for pattern in patterns:
+        m = re.search(pattern, text, re.I)
+        if not m:
+            continue
+        parts = m.groupdict()
+        month = parts.get("m") or month_names.get(parts.get("mon", "").lower())
+        if month:
+            return normalize_date_parts(parts["y"], str(month), parts["d"])
+
+    return None
+
+
+def extract_date_from_url(url: str) -> Optional[str]:
+    if not url:
+        return None
+
+    m = re.search(r'/((20\d{2})/(\d{1,2})/(\d{1,2}))(?:/|$)', url)
+    if m:
+        return normalize_date_parts(m.group(2), m.group(3), m.group(4))
+
+    m = re.search(r'(20\d{2})(\d{2})(\d{2})(?=\.html?|[^\d]|$)', url)
+    if m:
+        return normalize_date_parts(m.group(1), m.group(2), m.group(3))
+
+    m = re.search(r'/((20\d{2}))/er(\d{2})(\d{2})_', url, re.I)
+    if m:
+        return normalize_date_parts(m.group(2), m.group(3), m.group(4))
+
+    return None
+
+
+def extract_date_from_context(node, url: str = "") -> Optional[str]:
+    date_from_url = extract_date_from_url(url)
+    if date_from_url:
+        return date_from_url
+
+    texts = []
+    target = node
+    for _ in range(4):
+        if not target:
+            break
+        texts.append(target.get_text(" ", strip=True))
+        target = getattr(target, "parent", None)
+
+    for text in texts:
+        date = extract_date_from_text(text)
+        if date:
+            return date
+
+    return None
+
+
 def decode_html_response(resp, default_encoding: str = "utf-8") -> str:
     content = resp.content
     head = content[:4096].decode("ascii", errors="ignore")
@@ -852,7 +924,11 @@ def fetch_rss(source: SourceConfig, timeout: int = 20) -> List[Article]:
         title = getattr(entry, 'title', '').strip()
         link = getattr(entry, 'link', '').strip()
         summary = getattr(entry, 'summary', '') or getattr(entry, 'description', '')
-        published = getattr(entry, 'published', None)
+        published = (
+            getattr(entry, 'published', None)
+            or getattr(entry, 'updated', None)
+            or getattr(entry, 'created', None)
+        )
 
         if not title or not link:
             continue
@@ -1117,6 +1193,8 @@ def fetch_html_list(source: SourceConfig, timeout: int = 20) -> List[Article]:
                     d = None
                 if d:
                     published = d.get_text(" ", strip=True)
+            if not published:
+                published = extract_date_from_context(row, full_url)
 
             if title in seen_title or full_url in seen_url:
                 continue
@@ -1213,12 +1291,13 @@ def fetch_html_list(source: SourceConfig, timeout: int = 20) -> List[Article]:
         if score >= 2:
             if not passes_source_allowlist(source.name, full_url):
                 continue
-            links.append((text, full_url))
+            published = extract_date_from_context(a, full_url)
+            links.append((text, full_url, published))
     seen_title = set()
     seen_url = set()
     items = []
 
-    for title, url in links:
+    for title, url, published in links:
         if title in seen_title:
             continue
         if url in seen_url:
@@ -1227,19 +1306,19 @@ def fetch_html_list(source: SourceConfig, timeout: int = 20) -> List[Article]:
         seen_title.add(title)
         seen_url.add(url)
 
-        items.append((title, url))
+        items.append((title, url, published))
         if len(items) >= source.max_items:
             break
 
     articles = []
-    for title, url in items:
+    for title, url, published in items:
         articles.append(Article(
             source=source.name,
             region=source.region,
             title=title,
             url=url,
             summary_raw='',
-            published=None,
+            published=published,
         ))
 
     return articles
