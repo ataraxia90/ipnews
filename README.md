@@ -85,6 +85,16 @@ python monitor.py
 python monitor.py --failed-only
 ```
 
+Claude 토큰을 쓰지 않고 Supabase `seen_urls`만 대량 갱신하려면:
+
+```bash
+python monitor.py --skip-analysis --no-telegram --max-items-override 999
+```
+
+- `--skip-analysis`: Claude 분석과 digest 발송을 건너뜁니다.
+- `--no-telegram`: 리뷰/digest 텔레그램 발송을 모두 건너뜁니다.
+- `--max-items-override 999`: `config.yaml`의 각 소스 `max_items` 대신 지정한 값을 사용합니다.
+
 ## 현재 실행 흐름
 
 1. `config.yaml`에서 활성화된 소스를 읽습니다.

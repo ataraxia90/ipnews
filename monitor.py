@@ -343,11 +343,28 @@ def load_config(path: str = 'config.yaml') -> Dict[str, Any]:
         return yaml.safe_load(f)
 
 
-def load_sources(cfg: Dict[str, Any]) -> List[SourceConfig]:
+def get_cli_int(flag: str) -> Optional[int]:
+    if flag not in sys.argv:
+        return None
+    idx = sys.argv.index(flag)
+    if idx + 1 >= len(sys.argv):
+        print(f"{flag} 값이 없어 무시합니다.")
+        return None
+    try:
+        return int(sys.argv[idx + 1])
+    except ValueError:
+        print(f"{flag} 값이 정수가 아니어서 무시합니다: {sys.argv[idx + 1]}")
+        return None
+
+
+def load_sources(cfg: Dict[str, Any], max_items_override: Optional[int] = None) -> List[SourceConfig]:
     out = []
     for s in cfg.get('sources', []):
         if not s.get('enabled', True):
             continue
+        max_items = s.get('max_items', 5)
+        if max_items_override is not None:
+            max_items = max_items_override
         out.append(SourceConfig(
             name=s['name'],
             region=s.get('region', ''),
@@ -355,7 +372,7 @@ def load_sources(cfg: Dict[str, Any]) -> List[SourceConfig]:
             monitor_url=s['monitor_url'],
             mode=s.get('mode', 'html_list'),
             enabled=s.get('enabled', True),
-            max_items=s.get('max_items', 5),
+            max_items=max_items,
             priority=s.get('priority', 3),
             list_selector=s.get('list_selector', ''),
             row_selector=s.get('row_selector', ''),
@@ -1852,6 +1869,8 @@ def save_raw_review_messages(messages: List[str], path: str = RAW_REVIEW_DIGEST_
 
 
 def telegram_send_enabled(cfg: Dict[str, Any], key: str) -> bool:
+    if '--no-telegram' in sys.argv:
+        return False
     tg_cfg = cfg.get('telegram', {})
     return tg_cfg.get(key, tg_cfg.get('send_enabled', False))
 
@@ -1934,9 +1953,11 @@ def main():
     run_id = time.strftime("%Y%m%d_%H%M%S", time.localtime(run_started))
     config_path = 'data/failed_sources.yaml' if '--failed-only' in sys.argv else 'config.yaml'
     failed_only = '--failed-only' in sys.argv
+    skip_analysis = '--skip-analysis' in sys.argv
+    max_items_override = get_cli_int('--max-items-override')
 
     cfg = load_config(config_path)
-    sources = load_sources(cfg)
+    sources = load_sources(cfg, max_items_override=max_items_override)
 
     seen = load_seen()
     existing_results = load_results()
@@ -1952,7 +1973,7 @@ def main():
 
     # =========================================================
     # [추가 1] 테스트용 스위치 변수 설정
-    SKIP_ANALYSIS = False  # True로 설정하면 Claude 분석 및 digest 텔레그램 발송을 건너뜁니다.
+    SKIP_ANALYSIS = skip_analysis  # True로 설정하면 Claude 분석 및 digest 텔레그램 발송을 건너뜁니다.
     RAW_RESULTS_PATH = 'data/raw_articles.json'  # 수집 원본만 저장할 파일 경로
     # =========================================================
 
@@ -1964,6 +1985,8 @@ def main():
         "config_path": config_path,
         "failed_only": failed_only,
         "skip_analysis": SKIP_ANALYSIS,
+        "max_items_override": max_items_override,
+        "no_telegram": '--no-telegram' in sys.argv,
         "paths": {
             "raw_articles": RAW_RESULTS_PATH,
             "raw_review_digest": RAW_REVIEW_DIGEST_PATH,
