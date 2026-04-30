@@ -13,6 +13,7 @@
   - Claude 요약 digest용: `TELEGRAM_DIGEST_CHAT_ID`
 - 실행 결과 로그를 `data/run_logs/run_YYYYMMDD_HHMMSS.json`로 저장
 - 실패/빈 소스 목록을 `data/failed_sources.yaml`로 저장하고 `--failed-only` 재실행 지원
+- GitHub Actions 정기 실행 및 Supabase 기반 `seen_urls` 상태 저장 지원
 
 ## 파일 구성
 
@@ -56,9 +57,12 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_REVIEW_CHAT_ID=
 TELEGRAM_DIGEST_CHAT_ID=
 ANTHROPIC_API_KEY=
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
 ```
 
 현재 코드는 `python-dotenv`로 `.env`를 자동 로드합니다.
+`SUPABASE_URL`과 `SUPABASE_SERVICE_ROLE_KEY`가 있으면 `seen_urls`를 Supabase의 `monitor_state` 테이블에서 우선 읽고 저장합니다. 없으면 기존처럼 `data/seen_urls.json`을 사용합니다.
 
 ## 실행
 
@@ -124,12 +128,29 @@ telegram:
 ## 운영 메모
 
 - VPS에서 매일 실행하려면 cron을 사용할 수 있습니다.
+- GitHub Actions에서는 `.github/workflows/run-monitor.yml`이 매일 한국시간 오전 8시에 실행됩니다.
 - `.env`, `venv/`, `data/*.json`, `data/run_logs/`는 Git에 올리지 않습니다.
 - VPS 배포 시에는 GitHub에서 clone/pull 후 서버에 별도 `.env`를 작성합니다.
+
+Supabase에는 아래 테이블이 필요합니다.
+
+```sql
+create table if not exists monitor_state (
+  key text primary key,
+  value jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table monitor_state enable row level security;
+
+insert into monitor_state (key, value)
+values ('seen_urls', '[]'::jsonb)
+on conflict (key)
+do update set value = excluded.value, updated_at = now();
+```
 
 예시 cron:
 
 ```cron
 0 8 * * * cd /home/ubuntu/ipnews && /home/ubuntu/ipnews/venv/bin/python monitor.py >> data/cron.log 2>&1
 ```
-

@@ -66,6 +66,8 @@ RAW_REVIEW_DIGEST_PATH = 'data/telegram_raw_review.txt'
 SOURCE_CHECK_REPORT_PATH = 'data/source_check_report.json'
 FAILED_SOURCES_PATH = 'data/failed_sources.yaml'
 RUN_LOG_DIR = 'data/run_logs'
+SUPABASE_STATE_TABLE = 'monitor_state'
+SUPABASE_SEEN_KEY = 'seen_urls'
 
 
 
@@ -363,7 +365,95 @@ def load_sources(cfg: Dict[str, Any]) -> List[SourceConfig]:
     return out
 
 
+def supabase_config() -> Optional[Dict[str, str]]:
+    url = os.getenv('SUPABASE_URL')
+    key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
+    if not url or not key:
+        return None
+    return {
+        "url": url.rstrip('/'),
+        "key": key,
+    }
+
+
+def supabase_headers(cfg: Dict[str, str], prefer: Optional[str] = None) -> Dict[str, str]:
+    headers = {
+        "apikey": cfg["key"],
+        "Authorization": f"Bearer {cfg['key']}",
+        "Content-Type": "application/json",
+    }
+    if prefer:
+        headers["Prefer"] = prefer
+    return headers
+
+
+def load_supabase_state(key: str) -> Optional[Any]:
+    cfg = supabase_config()
+    if not cfg:
+        return None
+
+    endpoint = f"{cfg['url']}/rest/v1/{SUPABASE_STATE_TABLE}"
+    try:
+        resp = requests.get(
+            endpoint,
+            headers=supabase_headers(cfg),
+            params={"key": f"eq.{key}", "select": "value"},
+            timeout=20,
+        )
+        if not resp.ok:
+            print(f"Supabase 상태 로드 실패({key}): {resp.status_code} {resp.text[:200]}")
+            return None
+
+        rows = resp.json()
+        if not rows:
+            return None
+        return rows[0].get("value")
+    except requests.RequestException as e:
+        print(f"Supabase 상태 로드 실패({key}): {e.__class__.__name__}")
+    except Exception as e:
+        print(f"Supabase 상태 로드 실패({key}): {e}")
+    return None
+
+
+def save_supabase_state(key: str, value: Any) -> bool:
+    cfg = supabase_config()
+    if not cfg:
+        return False
+
+    endpoint = f"{cfg['url']}/rest/v1/{SUPABASE_STATE_TABLE}"
+    payload = {
+        "key": key,
+        "value": value,
+    }
+    try:
+        resp = requests.post(
+            endpoint,
+            headers=supabase_headers(cfg, prefer="resolution=merge-duplicates,return=minimal"),
+            params={"on_conflict": "key"},
+            json=payload,
+            timeout=20,
+        )
+        if not resp.ok:
+            print(f"Supabase 상태 저장 실패({key}): {resp.status_code} {resp.text[:200]}")
+            return False
+        return True
+    except requests.RequestException as e:
+        print(f"Supabase 상태 저장 실패({key}): {e.__class__.__name__}")
+    except Exception as e:
+        print(f"Supabase 상태 저장 실패({key}): {e}")
+    return False
+
+
 def load_seen() -> set:
+    remote_seen = load_supabase_state(SUPABASE_SEEN_KEY)
+    if isinstance(remote_seen, list):
+        print(f"Supabase seen_urls 로드: {len(remote_seen)}개")
+        return set(remote_seen)
+    if isinstance(remote_seen, dict) and isinstance(remote_seen.get("urls"), list):
+        urls = remote_seen["urls"]
+        print(f"Supabase seen_urls 로드: {len(urls)}개")
+        return set(urls)
+
     if not os.path.exists(SEEN_PATH):
         return set()
     try:
@@ -376,8 +466,12 @@ def load_seen() -> set:
 
 def save_seen(seen: set):
     os.makedirs('data', exist_ok=True)
+    seen_list = sorted(seen)
     with open(SEEN_PATH, 'w', encoding='utf-8') as f:
-        json.dump(sorted(seen), f, ensure_ascii=False, indent=2)
+        json.dump(seen_list, f, ensure_ascii=False, indent=2)
+
+    if save_supabase_state(SUPABASE_SEEN_KEY, seen_list):
+        print(f"Supabase seen_urls 저장: {len(seen_list)}개")
 
 
 def load_results() -> List[Dict[str, Any]]:
