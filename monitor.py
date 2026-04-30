@@ -1918,6 +1918,15 @@ def split_telegram_messages(lines: List[str], max_chars: int = 3500) -> List[str
     current_len = 0
 
     for line in lines:
+        if len(line) > max_chars:
+            if current:
+                messages.append("\n".join(current).rstrip())
+                current = []
+                current_len = 0
+            for start in range(0, len(line), max_chars):
+                messages.append(line[start:start + max_chars].rstrip())
+            continue
+
         add_len = len(line) + 1
         if current and current_len + add_len > max_chars:
             messages.append("\n".join(current).rstrip())
@@ -2072,30 +2081,13 @@ def send_telegram_messages(
     chat_id_env: str = 'TELEGRAM_CHAT_ID',
     enabled_key: str = 'send_enabled',
 ):
-    if not telegram_send_enabled(cfg, enabled_key):
-        return
-
-    token = os.getenv('TELEGRAM_BOT_TOKEN')
-    chat_id = os.getenv(chat_id_env)
-    if not token or not chat_id:
-        print(f'텔레그램 토큰 또는 {chat_id_env}가 없어 실제 발송은 건너뜁니다.')
-        return
-
-    tg_cfg = cfg.get('telegram', {})
-    timeout_seconds = int(tg_cfg.get('timeout_seconds', 10) or 10)
-
-    url = f'https://api.telegram.org/bot{token}/sendMessage'
-    payload = {
-        'chat_id': chat_id,
-        'text': text,
-        'disable_web_page_preview': False,
-    }
-    try:
-        resp = requests.post(url, json=payload, timeout=timeout_seconds)
-        if not resp.ok:
-            print('텔레그램 전송 실패:', resp.text)
-    except requests.RequestException as e:
-        print(f'텔레그램 전송 실패: {e.__class__.__name__}')
+    messages = split_telegram_messages(text.splitlines(), max_chars=3500)
+    send_telegram_message_chunks(
+        messages,
+        cfg,
+        chat_id_env=chat_id_env,
+        enabled_key=enabled_key,
+    )
 
 
 def main():
