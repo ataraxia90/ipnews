@@ -47,7 +47,9 @@ jobs:
           name: ip-monitor-output
           path: |
             data/raw_articles.json
+            data/results.json
             data/source_check_report.json
+            data/telegram_digest.txt
             data/telegram_raw_review.txt
             data/failed_sources.yaml
             data/run_logs/*.json

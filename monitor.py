@@ -68,6 +68,7 @@ FAILED_SOURCES_PATH = 'data/failed_sources.yaml'
 RUN_LOG_DIR = 'data/run_logs'
 SUPABASE_STATE_TABLE = 'monitor_state'
 SUPABASE_SEEN_KEY = 'seen_urls'
+SUPABASE_RESULTS_KEY = 'analysis_results'
 
 
 
@@ -475,6 +476,15 @@ def save_seen(seen: set):
 
 
 def load_results() -> List[Dict[str, Any]]:
+    remote_results = load_supabase_state(SUPABASE_RESULTS_KEY)
+    if isinstance(remote_results, list):
+        print(f"Supabase analysis_results 로드: {len(remote_results)}개")
+        return remote_results
+    if isinstance(remote_results, dict) and isinstance(remote_results.get("items"), list):
+        items = remote_results["items"]
+        print(f"Supabase analysis_results 로드: {len(items)}개")
+        return items
+
     if not os.path.exists(RESULTS_PATH):
         return []
     try:
@@ -502,6 +512,9 @@ def save_results(items: List[Dict[str, Any]]):
     os.makedirs('data', exist_ok=True)
     with open(RESULTS_PATH, 'w', encoding='utf-8') as f:
         json.dump(items, f, ensure_ascii=False, indent=2)
+
+    if save_supabase_state(SUPABASE_RESULTS_KEY, items):
+        print(f"Supabase analysis_results 저장: {len(items)}개")
 
 def build_source_check_record(
     src: SourceConfig,

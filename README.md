@@ -69,6 +69,7 @@ SUPABASE_SERVICE_ROLE_KEY=
 
 현재 코드는 `python-dotenv`로 `.env`를 자동 로드합니다.
 `SUPABASE_URL`과 `SUPABASE_SERVICE_ROLE_KEY`가 있으면 `seen_urls`를 Supabase의 `monitor_state` 테이블에서 우선 읽고 저장합니다. 없으면 기존처럼 `data/seen_urls.json`을 사용합니다.
+Claude 분석 결과 전체는 Supabase `monitor_state` 테이블의 `analysis_results` 키에 저장합니다. 없으면 기존처럼 `data/results.json`을 사용합니다.
 
 ## 실행
 
@@ -93,7 +94,7 @@ python monitor.py --failed-only
 5. `data/telegram_raw_review.txt`를 생성합니다.
 6. `telegram.review_send_enabled: true`이면 검증용 텔레그램 채널로 발송을 시도합니다.
 7. `SKIP_ANALYSIS = True`이면 Claude 분석 없이 종료합니다.
-8. `SKIP_ANALYSIS = False`이면 Claude 분석 후 `data/results.json`, `data/telegram_digest.txt`를 생성하고 요약 채널로 발송합니다.
+8. `SKIP_ANALYSIS = False`이면 Claude 분석 후 `data/results.json`, Supabase `analysis_results`, `data/telegram_digest.txt`를 생성하고 요약 채널로 발송합니다.
 
 ## 텔레그램 설정
 
