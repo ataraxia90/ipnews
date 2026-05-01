@@ -58,6 +58,8 @@ class AnalyzedArticle:
     category: str
     key_points: List[str]
     raw_excerpt: str
+    topic_key: str = ""
+    topic_label: str = ""
 
 
 @dataclass
@@ -1869,6 +1871,10 @@ class ClaudeClient:
 4. 1~2단어의 카테고리(예: 특허정책, 저작권, AI규제, 표준특허, 무역분쟁 등)를 정하라.
 5. 핵심 시사점 2~3문장을 작성하라.
 6. '한국'이나 'South Korea'를 직접 언급하고 있으면 중요도 점수를 상향하고, 요약에 해당 내용을 포함하라.
+7. 같은 사건·보고서·판례·법안·정책 발표·기업 발표를 묶을 수 있도록 topic_key와 topic_label을 작성하라.
+   - topic_key는 영문 소문자 slug로 작성한다. 예: "2026-ustr-special-301-report", "uspto-gen-ai-patent-examination"
+   - topic_label은 사람이 읽기 쉬운 짧은 이슈명으로 작성한다. 예: "USTR 2026 Special 301 Report"
+   - 같은 이슈를 다른 매체가 보도한 경우 동일한 topic_key가 나오도록 일반적이고 안정적인 이름을 사용한다.
 
 추가 규칙:
 - 단순 기관 소개, 서비스 소개, 검색도구 안내, 데이터베이스 안내, 메뉴 페이지, 고정된 법령 원문 페이지(예: Title 17 전체 텍스트)는 정책 변경이 없다면 중요도를 0~20 사이로 낮게 평가하라.
@@ -1881,7 +1887,9 @@ JSON으로만 응답하라:
   "importance_score": 87,
   "category": "AI규제",
   "summary_ko": "…",
-  "key_points": "…"
+  "key_points": ["…"],
+  "topic_key": "uspto-ai-patent-examination",
+  "topic_label": "USPTO AI Patent Examination"
 }}
 """
         resp = self.client.messages.create(
@@ -1909,6 +1917,8 @@ JSON으로만 응답하라:
         if not isinstance(key_points, list):
             key_points = [str(key_points)]
         key_points = [str(x).strip() for x in key_points if str(x).strip()]
+        topic_key = normalize_topic_key(str(data.get('topic_key', '')).strip())
+        topic_label = str(data.get('topic_label', '')).strip()
 
         return AnalyzedArticle(
             source=art.source,
@@ -1921,6 +1931,8 @@ JSON으로만 응답하라:
             category=category,
             key_points=key_points,
             raw_excerpt=art.summary_raw,
+            topic_key=topic_key,
+            topic_label=topic_label,
         )
 
 
@@ -1931,6 +1943,13 @@ DIGEST_TOPIC_STOPWORDS = {
     "through", "with", "year", "years",
     "관련", "기타", "동향", "발표", "보도", "분야", "정책", "제도",
 }
+
+
+def normalize_topic_key(value: str) -> str:
+    value = html.unescape(value or "").lower().strip()
+    value = re.sub(r'[^a-z0-9]+', '-', value)
+    value = re.sub(r'-+', '-', value).strip('-')
+    return value
 
 
 def normalize_topic_text(text: str) -> str:
@@ -1952,6 +1971,9 @@ def digest_topic_text(item: AnalyzedArticle) -> str:
 def extract_digest_topic_keys(item: AnalyzedArticle) -> set:
     text = normalize_topic_text(digest_topic_text(item))
     keys = set()
+    topic_key = normalize_topic_key(getattr(item, "topic_key", ""))
+    if topic_key:
+        keys.add(f"topic:{topic_key}")
 
     if (
         "special 301" in text
