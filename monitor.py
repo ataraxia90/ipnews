@@ -2738,6 +2738,79 @@ def build_raw_review_summary_lines(
     return lines
 
 
+def lines_text_length(lines: List[str]) -> int:
+    return len("\n".join(lines).rstrip())
+
+
+def build_source_review_chunks(
+    overview_lines: List[str],
+    source_blocks: List[tuple],
+    max_chars: int,
+) -> List[str]:
+    chunks: List[str] = []
+    current: List[str] = []
+
+    def flush_current():
+        nonlocal current
+        if current:
+            chunks.append("\n".join(current).rstrip())
+            current = []
+
+    def can_add(block: List[str]) -> bool:
+        if not current:
+            return lines_text_length(block) <= max_chars
+        return lines_text_length(current + block) <= max_chars
+
+    def add_small_block(block: List[str]):
+        nonlocal current
+        if can_add(block):
+            current.extend(block)
+            return
+        flush_current()
+        if lines_text_length(block) <= max_chars:
+            current.extend(block)
+        else:
+            chunks.extend(split_telegram_messages(block, max_chars=max_chars))
+
+    add_small_block(overview_lines)
+
+    for source_header, article_blocks in source_blocks:
+        source_lines: List[str] = [source_header]
+        for article_block in article_blocks:
+            source_lines.extend(article_block)
+
+        if can_add(source_lines):
+            current.extend(source_lines)
+            continue
+
+        flush_current()
+        if lines_text_length(source_lines) <= max_chars:
+            current.extend(source_lines)
+            continue
+
+        part: List[str] = [source_header]
+        for article_block in article_blocks:
+            candidate = part + article_block
+            if lines_text_length(candidate) <= max_chars:
+                part = candidate
+                continue
+
+            if len(part) > 1:
+                chunks.append("\n".join(part).rstrip())
+                part = [source_header] + article_block
+                if lines_text_length(part) <= max_chars:
+                    continue
+
+            chunks.extend(split_telegram_messages([source_header] + article_block, max_chars=max_chars))
+            part = [source_header]
+
+        if len(part) > 1:
+            chunks.append("\n".join(part).rstrip())
+
+    flush_current()
+    return chunks
+
+
 def build_raw_review_messages(
     articles: List[Article],
     generated_at: Optional[str] = None,
@@ -2756,7 +2829,7 @@ def build_raw_review_messages(
         key = (region, art.source)
         source_groups.setdefault(key, []).append(art)
 
-    lines = [
+    overview_lines = [
         f"IP Monitor 수집 검증 목록 - {generated_date}",
         "",
         f"총 수집 후보: {len(articles)}개",
@@ -2766,28 +2839,26 @@ def build_raw_review_messages(
     ]
 
     for region in REVIEW_REGION_ORDER:
-        lines.append(f"- {region}: {region_counts.get(region, 0)}개")
+        overview_lines.append(f"- {region}: {region_counts.get(region, 0)}개")
 
-    lines.append("")
-    current_region = None
+    overview_lines.append("")
+    source_blocks = []
     for (region, source), items in sorted(
         source_groups.items(),
         key=lambda x: (REVIEW_REGION_ORDER.index(x[0][0]), x[0][1])
     ):
-        if current_region != region:
-            if current_region is not None:
-                lines.append("")
-            current_region = region
-
-        lines.append(f"[{region}] {source} - {len(items)}개")
+        article_blocks = []
         for idx, art in enumerate(items, start=1):
             title = normalize_review_title(art.title)
             if len(title) > 160:
                 title = title[:157].rstrip() + "..."
-            lines.append(f"{idx}. {title}")
-            lines.append(f"   날짜: {format_review_date(art.published, art.url, generated_at=generated_at)}")
-            lines.append(f"   링크: {art.url}")
-        lines.append("")
+            article_blocks.append([
+                f"{idx}. {title}",
+                f"   날짜: {format_review_date(art.published, art.url, generated_at=generated_at)}",
+                f"   링크: {art.url}",
+                "",
+            ])
+        source_blocks.append((f"[{region}] {source} - {len(items)}개", article_blocks))
 
     # Reserve room for the per-message review header so every Telegram chunk
     # starts with the same title instead of whichever article line was split first.
@@ -2798,7 +2869,7 @@ def build_raw_review_messages(
         generated_at=generated_at,
     )
     chunks = split_telegram_messages(summary_lines, max_chars=body_max_chars)
-    chunks.extend(split_telegram_messages(lines, max_chars=body_max_chars))
+    chunks.extend(build_source_review_chunks(overview_lines, source_blocks, max_chars=body_max_chars))
     total = len(chunks)
     titled = []
     for idx, chunk in enumerate(chunks, start=1):
