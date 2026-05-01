@@ -3,6 +3,7 @@ import os
 import json
 import time
 import re
+import html
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Optional
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
@@ -57,6 +58,14 @@ class AnalyzedArticle:
     category: str
     key_points: List[str]
     raw_excerpt: str
+
+
+@dataclass
+class DigestTopicCluster:
+    representative: AnalyzedArticle
+    items: List[AnalyzedArticle]
+    topic_keys: set
+    representative_tokens: set
 
 
 SEEN_PATH = 'data/seen_urls.json'
@@ -1915,25 +1924,141 @@ JSON으로만 응답하라:
         )
 
 
+DIGEST_TOPIC_STOPWORDS = {
+    "about", "after", "again", "against", "also", "and", "annual", "are", "from",
+    "into", "its", "new", "news", "not", "over", "policy", "press", "release",
+    "releases", "report", "reports", "said", "says", "the", "their", "this",
+    "through", "with", "year", "years",
+    "관련", "기타", "동향", "발표", "보도", "분야", "정책", "제도",
+}
+
+
+def normalize_topic_text(text: str) -> str:
+    text = html.unescape(text or "").lower()
+    text = re.sub(r'https?://\S+', ' ', text)
+    text = re.sub(r'[\W_]+', ' ', text, flags=re.UNICODE)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def digest_topic_text(item: AnalyzedArticle) -> str:
+    return " ".join([
+        item.title or "",
+        item.category or "",
+        item.summary_ko or "",
+        " ".join(item.key_points or []),
+    ])
+
+
+def extract_digest_topic_keys(item: AnalyzedArticle) -> set:
+    text = normalize_topic_text(digest_topic_text(item))
+    keys = set()
+
+    if (
+        "special 301" in text
+        or "스페셜 301" in text
+        or "priority foreign country" in text
+        or "최대 우려국" in text
+        or "最大の懸念国" in text
+        or ("ustr" in text and "watch list" in text)
+    ):
+        keys.add("special-301")
+    if "skinny label" in text or ("amarin" in text and "hikma" in text):
+        keys.add("skinny-label")
+    if ("gen ai" in text or "generative ai" in text or "생성형 ai" in text) and (
+        "patent examination" in text or "특허 심사" in text
+    ):
+        keys.add("gen-ai-patent-examination")
+    if "wipo adr" in text or ("wipo" in text and "domain" in text and "artificial intelligence" in text):
+        keys.add("wipo-ai-adr")
+
+    return keys
+
+
+def extract_digest_topic_tokens(item: AnalyzedArticle) -> set:
+    text = normalize_topic_text(digest_topic_text(item))
+    tokens = set()
+    for token in text.split():
+        if token in DIGEST_TOPIC_STOPWORDS:
+            continue
+        if len(token) < 3 and not token.isdigit():
+            continue
+        tokens.add(token)
+    return tokens
+
+
+def same_digest_topic(
+    keys: set,
+    tokens: set,
+    cluster: DigestTopicCluster
+) -> bool:
+    if keys and cluster.topic_keys and keys.intersection(cluster.topic_keys):
+        return True
+
+    if not tokens or not cluster.representative_tokens:
+        return False
+
+    intersection = tokens.intersection(cluster.representative_tokens)
+    union = tokens.union(cluster.representative_tokens)
+    jaccard = len(intersection) / len(union) if union else 0
+    return len(intersection) >= 4 and jaccard >= 0.45
+
+
+def cluster_digest_topics(items: List[AnalyzedArticle]) -> List[DigestTopicCluster]:
+    clusters: List[DigestTopicCluster] = []
+    sorted_items = sorted(items, key=lambda x: x.importance_score, reverse=True)
+
+    for item in sorted_items:
+        keys = extract_digest_topic_keys(item)
+        tokens = extract_digest_topic_tokens(item)
+
+        matched = None
+        for cluster in clusters:
+            if same_digest_topic(keys, tokens, cluster):
+                matched = cluster
+                break
+
+        if matched:
+            matched.items.append(item)
+            matched.topic_keys.update(keys)
+        else:
+            clusters.append(DigestTopicCluster(
+                representative=item,
+                items=[item],
+                topic_keys=keys,
+                representative_tokens=tokens,
+            ))
+
+    return clusters
+
+
 def build_telegram_digest(
     analyzed: List[AnalyzedArticle],
     top_n: int = 5,
     min_importance: int = 0
 ) -> str:
     filtered = [x for x in analyzed if x.importance_score >= min_importance]
-    sorted_items = sorted(filtered, key=lambda x: x.importance_score, reverse=True)[:top_n]
+    topic_clusters = cluster_digest_topics(filtered)
+    selected_clusters = topic_clusters[:top_n]
 
     lines = []
     lines.append("📌 오늘의 IP 정책·제도 동향 요약\n")
 
-    if not sorted_items:
+    if not selected_clusters:
         lines.append("오늘은 기준 점수 이상 신규 동향이 없습니다.")
         return "\n".join(lines)
 
-    for i, item in enumerate(sorted_items, start=1):
+    for i, cluster in enumerate(selected_clusters, start=1):
+        item = cluster.representative
         lines.append(f"{i}. [{item.importance_score}점] {item.title}")
         lines.append(f"   - 출처: {item.source} / 지역: {item.region}")
         lines.append(f"   - 카테고리: {item.category}")
+        if len(cluster.items) > 1:
+            related = [
+                f"{x.source}({x.importance_score}점)"
+                for x in cluster.items[1:4]
+            ]
+            suffix = f": {', '.join(related)}" if related else ""
+            lines.append(f"   - 같은 이슈 관련 기사: {len(cluster.items) - 1}건{suffix}")
         if item.summary_ko:
             lines.append(f"   - 요약: {item.summary_ko}")
         if item.key_points:
