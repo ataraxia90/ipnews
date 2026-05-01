@@ -5,6 +5,7 @@ import time
 import re
 import html
 from dataclasses import dataclass, asdict
+from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
 
@@ -74,6 +75,7 @@ class DigestTopicCluster:
 SEEN_PATH = 'data/seen_urls.json'
 RESULTS_PATH = 'data/results.json'
 DAILY_RESULTS_DIR = 'data/daily_results'
+SENT_DIGEST_TOPICS_PATH = 'data/sent_digest_topics.json'
 DIGEST_PATH = 'data/telegram_digest.txt'
 RAW_REVIEW_DIGEST_PATH = 'data/telegram_raw_review.txt'
 SOURCE_CHECK_REPORT_PATH = 'data/source_check_report.json'
@@ -82,6 +84,7 @@ RUN_LOG_DIR = 'data/run_logs'
 SUPABASE_STATE_TABLE = 'monitor_state'
 SUPABASE_SEEN_KEY = 'seen_urls'
 SUPABASE_RESULTS_KEY = 'analysis_results'
+SUPABASE_SENT_DIGEST_TOPICS_KEY = 'sent_digest_topics'
 SUPABASE_RUN_LOG_PREFIX = 'run_log'
 SUPABASE_LATEST_RUN_LOG_KEY = 'run_log_latest'
 
@@ -675,6 +678,33 @@ def save_daily_results(items: List[Dict[str, Any]], run_id: str) -> Optional[str
         print(f"Supabase {daily_key} 저장: {len(daily_items)}개")
 
     return path
+
+
+def load_sent_digest_topics() -> List[Dict[str, Any]]:
+    remote = load_supabase_state(SUPABASE_SENT_DIGEST_TOPICS_KEY)
+    if isinstance(remote, list):
+        print(f"Supabase sent_digest_topics 로드: {len(remote)}개")
+        return remote
+
+    if os.path.exists(SENT_DIGEST_TOPICS_PATH):
+        try:
+            with open(SENT_DIGEST_TOPICS_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, list):
+                return data
+        except Exception:
+            return []
+
+    return []
+
+
+def save_sent_digest_topics(items: List[Dict[str, Any]]):
+    os.makedirs('data', exist_ok=True)
+    with open(SENT_DIGEST_TOPICS_PATH, 'w', encoding='utf-8') as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+
+    if save_supabase_state(SUPABASE_SENT_DIGEST_TOPICS_KEY, items):
+        print(f"Supabase sent_digest_topics 저장: {len(items)}개")
 
 
 def build_source_check_record(
@@ -2255,15 +2285,170 @@ def digest_region_label(item: AnalyzedArticle) -> str:
     return issue_region or source_region or "-"
 
 
-def build_telegram_digest(
+def run_date_from_run_id(run_id: str) -> str:
+    try:
+        return datetime.strptime(run_id[:8], "%Y%m%d").strftime("%Y-%m-%d")
+    except Exception:
+        return time.strftime("%Y-%m-%d")
+
+
+def parse_iso_date(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value[:10], "%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def digest_cluster_topic_key(cluster: DigestTopicCluster) -> str:
+    representative_key = normalize_topic_key(getattr(cluster.representative, "topic_key", ""))
+    if representative_key:
+        return representative_key
+
+    topic_keys = sorted(str(key) for key in cluster.topic_keys if str(key).strip())
+    if topic_keys:
+        return topic_keys[0].replace("topic:", "", 1)
+
+    return ""
+
+
+def digest_cluster_max_score(cluster: DigestTopicCluster) -> int:
+    return max((item.importance_score for item in cluster.items), default=0)
+
+
+def has_substantial_update_signal(cluster: DigestTopicCluster) -> bool:
+    text = normalize_topic_text(" ".join(
+        f"{item.title} {item.summary_ko} {' '.join(item.key_points or [])}"
+        for item in cluster.items
+    ))
+    update_keywords = [
+        "ruling", "judgment", "decision", "lawsuit filed", "investigation",
+        "sanction", "settlement", "law passed", "signed into law",
+        "판결", "결정", "조사", "제재", "소송", "법안 통과", "시행",
+    ]
+    return any(keyword in text for keyword in update_keywords)
+
+
+def should_suppress_recent_digest_topic(
+    cluster: DigestTopicCluster,
+    sent_topic: Optional[Dict[str, Any]],
+    run_date: str,
+    recent_days: int
+) -> bool:
+    if not sent_topic:
+        return False
+
+    last_sent = parse_iso_date(str(sent_topic.get("last_sent_date", "")))
+    current = parse_iso_date(run_date)
+    if not last_sent or not current:
+        return False
+
+    if current - last_sent > timedelta(days=recent_days):
+        return False
+
+    previous_score = int(sent_topic.get("representative_score") or 0)
+    current_score = digest_cluster_max_score(cluster)
+    previous_authority = int(sent_topic.get("representative_authority") or 0)
+    current_authority = digest_source_authority_score(cluster.representative)
+
+    if current_score >= previous_score + 10:
+        return False
+    if current_authority > previous_authority and current_score >= previous_score:
+        return False
+    if has_substantial_update_signal(cluster) and current_score >= 85:
+        return False
+
+    return True
+
+
+def select_digest_clusters(
     analyzed: List[AnalyzedArticle],
     top_n: int = 5,
-    min_importance: int = 0
-) -> str:
+    min_importance: int = 0,
+    sent_topics: Optional[List[Dict[str, Any]]] = None,
+    recent_topic_days: int = 3,
+    run_date: Optional[str] = None,
+) -> tuple:
     filtered = [x for x in analyzed if x.importance_score >= min_importance]
     topic_clusters = cluster_digest_topics(filtered)
-    selected_clusters = topic_clusters[:top_n]
+    run_date = run_date or time.strftime("%Y-%m-%d")
+    sent_index = {
+        str(item.get("topic_key", "")): item
+        for item in (sent_topics or [])
+        if item.get("topic_key")
+    }
 
+    selected = []
+    skipped = []
+    for cluster in topic_clusters:
+        topic_key = digest_cluster_topic_key(cluster)
+        sent_topic = sent_index.get(topic_key) if topic_key else None
+        if topic_key and should_suppress_recent_digest_topic(
+            cluster,
+            sent_topic,
+            run_date,
+            recent_topic_days,
+        ):
+            skipped.append({
+                "topic_key": topic_key,
+                "topic_label": getattr(cluster.representative, "topic_label", ""),
+                "representative_title": cluster.representative.title,
+                "last_sent_date": sent_topic.get("last_sent_date") if sent_topic else "",
+                "score": digest_cluster_max_score(cluster),
+            })
+            continue
+
+        selected.append(cluster)
+        if len(selected) >= top_n:
+            break
+
+    return selected, skipped
+
+
+def update_sent_digest_topics(
+    sent_topics: List[Dict[str, Any]],
+    selected_clusters: List[DigestTopicCluster],
+    run_date: str,
+    max_history_days: int = 30,
+) -> List[Dict[str, Any]]:
+    index = {
+        str(item.get("topic_key", "")): dict(item)
+        for item in sent_topics
+        if item.get("topic_key")
+    }
+
+    for cluster in selected_clusters:
+        topic_key = digest_cluster_topic_key(cluster)
+        if not topic_key:
+            continue
+
+        item = cluster.representative
+        existing = index.get(topic_key, {})
+        index[topic_key] = {
+            "topic_key": topic_key,
+            "topic_label": getattr(item, "topic_label", "") or existing.get("topic_label", ""),
+            "first_sent_date": existing.get("first_sent_date") or run_date,
+            "last_sent_date": run_date,
+            "representative_url": item.url,
+            "representative_title": item.title,
+            "representative_source": item.source,
+            "representative_score": item.importance_score,
+            "representative_authority": digest_source_authority_score(item),
+            "sent_count": int(existing.get("sent_count") or 0) + 1,
+        }
+
+    cutoff = parse_iso_date(run_date) - timedelta(days=max_history_days)
+    out = []
+    for item in index.values():
+        last_sent = parse_iso_date(str(item.get("last_sent_date", "")))
+        if not last_sent or last_sent >= cutoff:
+            out.append(item)
+
+    return sorted(out, key=lambda x: str(x.get("last_sent_date", "")), reverse=True)
+
+
+def render_telegram_digest(selected_clusters: List[DigestTopicCluster]) -> str:
     lines = []
     lines.append(f"IP 동향 Digest - 상위 {len(selected_clusters)}건")
     lines.append("")
@@ -2298,6 +2483,19 @@ def build_telegram_digest(
         lines.append("")
 
     return "\n".join(lines)
+
+
+def build_telegram_digest(
+    analyzed: List[AnalyzedArticle],
+    top_n: int = 5,
+    min_importance: int = 0
+) -> str:
+    selected_clusters, _ = select_digest_clusters(
+        analyzed,
+        top_n=top_n,
+        min_importance=min_importance,
+    )
+    return render_telegram_digest(selected_clusters)
 
 
 def save_digest(text: str):
@@ -2503,6 +2701,7 @@ def main():
     fetch_timeout = cfg.get('fetch', {}).get('timeout_seconds', 20)
     top_n = cfg.get('analysis', {}).get('top_n_for_digest', 5)
     min_importance = cfg.get('analysis', {}).get('min_importance_for_digest', 0)
+    recent_topic_days = int(cfg.get('analysis', {}).get('recent_topic_days', 3) or 3)
 
     print(f'활성화된 소스 수: {len(sources)}')
     print(f'기존 분석 완료 URL 수: {len(already_analyzed)}')
@@ -2545,6 +2744,7 @@ def main():
             "seen_urls": SEEN_PATH,
             "results": RESULTS_PATH,
             "daily_results_dir": DAILY_RESULTS_DIR,
+            "sent_digest_topics": SENT_DIGEST_TOPICS_PATH,
             "telegram_digest": DIGEST_PATH,
         },
         "summary": {
@@ -2555,6 +2755,8 @@ def main():
             "raw_review_telegram_duration_seconds": None,
             "analysis_duration_seconds": None,
             "digest_telegram_duration_seconds": None,
+            "digest_recent_topic_days": recent_topic_days,
+            "digest_recent_topic_skipped_count": 0,
             "seen_skipped_count": 0,
             "already_analyzed_skipped_count": 0,
             "non_article_skipped_count": 0,
@@ -2583,6 +2785,7 @@ def main():
         "sources": [],
         "analysis_errors": [],
         "analysis_prefilter_skips": [],
+        "digest_recent_topic_skips": [],
     }
 
     new_articles: List[Article] = []
@@ -2798,11 +3001,20 @@ def main():
         run_log["summary"]["daily_results_saved"] = True
         run_log["summary"]["daily_results_path"] = daily_path
 
-    digest_text = build_telegram_digest(
+    sent_digest_topics = load_sent_digest_topics()
+    digest_run_date = run_date_from_run_id(run_id)
+    selected_digest_clusters, recent_topic_skips = select_digest_clusters(
         analyzed_items,
         top_n=top_n,
-        min_importance=min_importance
+        min_importance=min_importance,
+        sent_topics=sent_digest_topics,
+        recent_topic_days=recent_topic_days,
+        run_date=digest_run_date,
     )
+    run_log["summary"]["digest_recent_topic_skipped_count"] = len(recent_topic_skips)
+    run_log["digest_recent_topic_skips"] = recent_topic_skips[:100]
+
+    digest_text = render_telegram_digest(selected_digest_clusters)
     save_digest(digest_text)
     run_log["summary"]["digest_saved"] = True
     digest_telegram_started = time.time()
@@ -2816,6 +3028,12 @@ def main():
         time.time() - digest_telegram_started,
         3
     )
+    updated_sent_topics = update_sent_digest_topics(
+        sent_digest_topics,
+        selected_digest_clusters,
+        digest_run_date,
+    )
+    save_sent_digest_topics(updated_sent_topics)
 
     print('완료. results.json / telegram_digest.txt 생성(또는 갱신).')
     run_log["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")

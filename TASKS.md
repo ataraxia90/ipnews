@@ -21,7 +21,7 @@
 - [x] D6. `source_region`과 `issue_region` 분리
   - 수집 출처의 지역과 실제 이슈 대상 지역을 구분
   - 예: MLex 미국 소스에서 EU 이슈를 다루는 경우
-- [ ] D7. 날짜를 넘는 topic 중복 억제
+- [x] D7. 날짜를 넘는 topic 중복 억제
   - 현재 digest clustering은 당일 분석 대상 안에서만 중복을 묶음
   - D일 공식 발표 후 D+1/D+2일 언론 후속보도가 같은 `topic_key`로 다시 digest에 뜰 수 있음
   - Supabase에 `sent_digest_topics` 저장 검토
