@@ -76,7 +76,7 @@
     - 해결: `date_selector` 결과를 그대로 쓰기 전에 `extract_date_from_text()`로 날짜 포함 여부를 검증
     - 날짜 없이 시간만 있으면 `extract_date_from_url(full_url)` 결과와 결합해 `YYYY-MM-DD HH:MM`으로 보정
     - URL 날짜도 없으면 상세 페이지 날짜 fallback 또는 `시간만 추출됨` 플래그를 review 이상징후에 표시
-- [ ] R8. 제목 정리
+- [x] R8. 제목 정리
   - `html.unescape()` 적용
   - `&nbsp;` 등 HTML entity 제거
   - 과도한 공백 정리

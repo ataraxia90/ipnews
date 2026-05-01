@@ -2540,8 +2540,15 @@ def split_telegram_messages(lines: List[str], max_chars: int = 3500) -> List[str
 REVIEW_REGION_ORDER = ["미국", "일본", "중국", "유럽", "국제기구", "기타"]
 
 
+def normalize_review_title(title: Any) -> str:
+    text = html.unescape(str(title or ""))
+    text = text.replace("\xa0", " ").replace("\u3000", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 def review_title_needs_attention(title: Optional[str]) -> bool:
-    text = re.sub(r"\s+", " ", str(title or "")).strip()
+    text = normalize_review_title(title)
     if not text:
         return True
     if "\ufffd" in text:
@@ -2680,7 +2687,7 @@ def build_raw_review_summary_lines(
     if missing_date_articles:
         lines.extend(["", "날짜 누락 샘플"])
         for art in missing_date_articles[:5]:
-            title = re.sub(r"\s+", " ", str(art.title or "")).strip()
+            title = normalize_review_title(art.title)
             if len(title) > 90:
                 title = title[:87].rstrip() + "..."
             lines.append(f"- {art.source} | {title}")
@@ -2690,7 +2697,7 @@ def build_raw_review_summary_lines(
     if title_attention_articles:
         lines.extend(["", "제목 확인 필요 샘플"])
         for art in title_attention_articles[:5]:
-            title = re.sub(r"\s+", " ", str(art.title or "")).strip()
+            title = normalize_review_title(art.title)
             if len(title) > 90:
                 title = title[:87].rstrip() + "..."
             lines.append(f"- {art.source} | {title or '(빈 제목)'}")
@@ -2743,7 +2750,7 @@ def build_raw_review_messages(
 
         lines.append(f"[{region}] {source} - {len(items)}개")
         for idx, art in enumerate(items, start=1):
-            title = re.sub(r"\s+", " ", art.title or "").strip()
+            title = normalize_review_title(art.title)
             if len(title) > 160:
                 title = title[:157].rstrip() + "..."
             lines.append(f"{idx}. {title}")
