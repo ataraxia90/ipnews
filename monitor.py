@@ -81,6 +81,8 @@ RUN_LOG_DIR = 'data/run_logs'
 SUPABASE_STATE_TABLE = 'monitor_state'
 SUPABASE_SEEN_KEY = 'seen_urls'
 SUPABASE_RESULTS_KEY = 'analysis_results'
+SUPABASE_RUN_LOG_PREFIX = 'run_log'
+SUPABASE_LATEST_RUN_LOG_KEY = 'run_log_latest'
 
 
 
@@ -661,6 +663,13 @@ def save_run_log(log: Dict[str, Any]) -> str:
     path = os.path.join(RUN_LOG_DIR, f"run_{run_id}.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(log, f, ensure_ascii=False, indent=2)
+
+    run_log_key = f"{SUPABASE_RUN_LOG_PREFIX}_{run_id}"
+    if save_supabase_state(run_log_key, log):
+        print(f"Supabase {run_log_key} 저장")
+    if save_supabase_state(SUPABASE_LATEST_RUN_LOG_KEY, log):
+        print(f"Supabase {SUPABASE_LATEST_RUN_LOG_KEY} 저장")
+
     return path
 
 
@@ -2378,6 +2387,20 @@ def main():
         "skip_analysis": SKIP_ANALYSIS,
         "max_items_override": max_items_override,
         "no_telegram": '--no-telegram' in sys.argv,
+        "github": {
+            "event_name": os.getenv("GITHUB_EVENT_NAME", ""),
+            "run_id": os.getenv("GITHUB_RUN_ID", ""),
+            "run_attempt": os.getenv("GITHUB_RUN_ATTEMPT", ""),
+            "workflow": os.getenv("GITHUB_WORKFLOW", ""),
+            "repository": os.getenv("GITHUB_REPOSITORY", ""),
+            "server_url": os.getenv("GITHUB_SERVER_URL", ""),
+            "run_url": (
+                f"{os.getenv('GITHUB_SERVER_URL', 'https://github.com')}/"
+                f"{os.getenv('GITHUB_REPOSITORY', '')}/actions/runs/{os.getenv('GITHUB_RUN_ID', '')}"
+                if os.getenv("GITHUB_REPOSITORY") and os.getenv("GITHUB_RUN_ID")
+                else ""
+            ),
+        },
         "paths": {
             "raw_articles": RAW_RESULTS_PATH,
             "raw_review_digest": RAW_REVIEW_DIGEST_PATH,
@@ -2392,6 +2415,10 @@ def main():
             "total_sources": len(sources),
             "total_fetched_articles": 0,
             "total_new_articles": 0,
+            "fetch_duration_seconds": None,
+            "raw_review_telegram_duration_seconds": None,
+            "analysis_duration_seconds": None,
+            "digest_telegram_duration_seconds": None,
             "seen_skipped_count": 0,
             "already_analyzed_skipped_count": 0,
             "non_article_skipped_count": 0,
@@ -2423,6 +2450,7 @@ def main():
     new_articles: List[Article] = []
     source_check_records: List[Dict[str, Any]] = []
 
+    fetch_started = time.time()
     total_sources = len(sources)
     for source_idx, src in enumerate(sources, start=1):
         progress_label = f'[{source_idx}/{total_sources}]'
@@ -2496,6 +2524,8 @@ def main():
         new_articles.extend(fresh)
         time.sleep(1)
 
+    run_log["summary"]["fetch_duration_seconds"] = round(time.time() - fetch_started, 3)
+
     save_seen(seen)
     save_source_check_report(source_check_records, SOURCE_CHECK_REPORT_PATH)
     save_failed_sources_yaml(cfg, source_check_records, FAILED_SOURCES_PATH)
@@ -2538,11 +2568,16 @@ def main():
 
     raw_review_messages = build_raw_review_messages(new_articles)
     save_raw_review_messages(raw_review_messages, RAW_REVIEW_DIGEST_PATH)
+    raw_review_telegram_started = time.time()
     send_telegram_message_chunks(
         raw_review_messages,
         cfg,
         chat_id_env='TELEGRAM_REVIEW_CHAT_ID',
         enabled_key='review_send_enabled',
+    )
+    run_log["summary"]["raw_review_telegram_duration_seconds"] = round(
+        time.time() - raw_review_telegram_started,
+        3
     )
     print(f'[DEBUG] 수집 검증용 텔레그램 메시지 {len(raw_review_messages)}개가 {RAW_REVIEW_DIGEST_PATH}에 저장되었습니다.')
     run_log["summary"]["raw_review_digest_saved"] = True
@@ -2561,6 +2596,7 @@ def main():
     analyzed_items: List[AnalyzedArticle] = []
     existing_urls = {item.get('url') for item in existing_results if item.get('url')}
 
+    analysis_started = time.time()
     for art in new_articles:
         already_exists = art.url in existing_urls
 
@@ -2591,6 +2627,8 @@ def main():
 
         time.sleep(0.5)
 
+    run_log["summary"]["analysis_duration_seconds"] = round(time.time() - analysis_started, 3)
+
     if not analyzed_items:
         print('새로 분석된 결과가 없습니다.')
         run_log["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -2616,11 +2654,16 @@ def main():
     )
     save_digest(digest_text)
     run_log["summary"]["digest_saved"] = True
+    digest_telegram_started = time.time()
     send_telegram_messages(
         digest_text,
         cfg,
         chat_id_env='TELEGRAM_DIGEST_CHAT_ID',
         enabled_key='digest_send_enabled',
+    )
+    run_log["summary"]["digest_telegram_duration_seconds"] = round(
+        time.time() - digest_telegram_started,
+        3
     )
 
     print('완료. results.json / telegram_digest.txt 생성(또는 갱신).')
