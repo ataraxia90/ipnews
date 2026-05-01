@@ -2643,6 +2643,14 @@ def build_raw_review_summary_lines(
     empty_sources = sum(1 for r in source_check_records if r.get("status") == "empty")
     failed_sources = sum(1 for r in source_check_records if r.get("status") == "fail")
     max_item_sources = [r for r in source_check_records if r.get("max_items_reached")]
+    problem_sources = [
+        r for r in source_check_records
+        if r.get("status") in ("fail", "empty")
+    ]
+    high_count_sources = [
+        r for r in source_check_records
+        if int(r.get("count") or 0) >= 50
+    ]
     missing_date_articles = [
         a for a in articles
         if format_review_date(a.published, a.url, generated_at=generated_at) == "-"
@@ -2659,10 +2667,24 @@ def build_raw_review_summary_lines(
         f"- 제목 잘림/깨짐 의심: {len(title_attention_articles)}개",
     ]
 
-    problem_sources = [
-        r for r in source_check_records
-        if r.get("status") in ("fail", "empty")
-    ]
+    attention_lines = []
+    if problem_sources:
+        attention_lines.append(f"- 수집 실패/빈값 소스: {len(problem_sources)}개")
+    if max_item_sources:
+        attention_lines.append(f"- max_items 도달 소스: {len(max_item_sources)}개")
+    if missing_date_articles:
+        attention_lines.append(f"- 날짜 누락 기사: {len(missing_date_articles)}개")
+    if title_attention_articles:
+        attention_lines.append(f"- 제목 잘림/깨짐 의심: {len(title_attention_articles)}개")
+    if high_count_sources:
+        attention_lines.append(f"- 후보 과다 소스: {len(high_count_sources)}개")
+
+    lines.extend(["", "확인 필요"])
+    if attention_lines:
+        lines.extend(attention_lines)
+    else:
+        lines.append("- 특이사항 없음")
+
     if problem_sources:
         lines.extend(["", "수집 실패/빈값 소스"])
         for record in problem_sources[:10]:
@@ -2683,6 +2705,15 @@ def build_raw_review_summary_lines(
             lines.append(f"- {name}: {count}/{max_items}개")
         if len(max_item_sources) > 10:
             lines.append(f"- 외 {len(max_item_sources) - 10}개")
+
+    if high_count_sources:
+        lines.extend(["", "후보 과다 소스"])
+        for record in high_count_sources[:10]:
+            name = record.get("name", "-")
+            count = record.get("count", 0)
+            lines.append(f"- {name}: {count}개")
+        if len(high_count_sources) > 10:
+            lines.append(f"- 외 {len(high_count_sources) - 10}개")
 
     if missing_date_articles:
         lines.extend(["", "날짜 누락 샘플"])
