@@ -18,7 +18,7 @@
 - [x] D5. Claude 호출 전 저관련 기사 사전 필터링
   - 채용, 일반 행사, 노동절 메시지, 단순 공고 등 명백한 비IP 항목 제외
   - 토큰 비용 절감
-- [ ] D6. `source_region`과 `issue_region` 분리
+- [x] D6. `source_region`과 `issue_region` 분리
   - 수집 출처의 지역과 실제 이슈 대상 지역을 구분
   - 예: MLex 미국 소스에서 EU 이슈를 다루는 경우
 - [ ] D7. 날짜를 넘는 topic 중복 억제
@@ -70,6 +70,12 @@
 - [ ] R7. 날짜 표시 정규화
   - 가능한 경우 `YYYY-MM-DD`로 표시
   - `5 min ago`, `2 hr ago` 같은 상대시간은 실행일 기준 변환 또는 상대시간으로 명시
+  - 요미우리 검색 결과에서 `05:00`처럼 시간만 표시되는 문제 분석
+    - 원인: `.c-list-date time`에서 시간만 잡히면 `published`가 비어있지 않아 URL 날짜 fallback이 실행되지 않음
+    - 예: URL `.../20260429-GYT8T00055/`에는 `2026-04-29`가 있지만 review에는 `05:00`만 표시됨
+    - 해결: `date_selector` 결과를 그대로 쓰기 전에 `extract_date_from_text()`로 날짜 포함 여부를 검증
+    - 날짜 없이 시간만 있으면 `extract_date_from_url(full_url)` 결과와 결합해 `YYYY-MM-DD HH:MM`으로 보정
+    - URL 날짜도 없으면 상세 페이지 날짜 fallback 또는 `시간만 추출됨` 플래그를 review 이상징후에 표시
 - [ ] R8. 제목 정리
   - `html.unescape()` 적용
   - `&nbsp;` 등 HTML entity 제거

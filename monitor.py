@@ -60,6 +60,7 @@ class AnalyzedArticle:
     raw_excerpt: str
     topic_key: str = ""
     topic_label: str = ""
+    issue_region: str = ""
 
 
 @dataclass
@@ -1976,6 +1977,11 @@ class ClaudeClient:
    - topic_key는 영문 소문자 slug로 작성한다. 예: "2026-ustr-special-301-report", "uspto-gen-ai-patent-examination"
    - topic_label은 사람이 읽기 쉬운 짧은 이슈명으로 작성한다. 예: "USTR 2026 Special 301 Report"
    - 같은 이슈를 다른 매체가 보도한 경우 동일한 topic_key가 나오도록 일반적이고 안정적인 이름을 사용한다.
+8. issue_region을 작성하라.
+   - issue_region은 출처 매체의 소재지가 아니라 기사에서 다루는 실제 정책·분쟁·시장 이슈의 대상 지역이다.
+   - 예: 미국 매체가 EU의 IP 정책을 다루면 issue_region은 "유럽" 또는 "EU"로 작성한다.
+   - 전세계 또는 다자기구 이슈면 "국제" 또는 "국제기구"로 작성한다.
+   - 명확하지 않으면 기사 메타정보의 지역/국가 값을 사용한다.
 
 추가 규칙:
 - factual summary와 policy implication을 엄격히 분리하라. `summary_ko`에는 원문에 없는 한국 관련 추론을 넣지 말고, 필요한 경우 `key_points`에 간접 시사점으로만 작성하라.
@@ -1992,7 +1998,8 @@ JSON으로만 응답하라:
   "summary_ko": "…",
   "key_points": ["…"],
   "topic_key": "uspto-ai-patent-examination",
-  "topic_label": "USPTO AI Patent Examination"
+  "topic_label": "USPTO AI Patent Examination",
+  "issue_region": "미국"
 }}
 """
         resp = self.client.messages.create(
@@ -2022,6 +2029,7 @@ JSON으로만 응답하라:
         key_points = [str(x).strip() for x in key_points if str(x).strip()]
         topic_key = normalize_topic_key(str(data.get('topic_key', '')).strip())
         topic_label = str(data.get('topic_label', '')).strip()
+        issue_region = str(data.get('issue_region', '')).strip() or art.region
 
         return AnalyzedArticle(
             source=art.source,
@@ -2036,6 +2044,7 @@ JSON으로만 응답하라:
             raw_excerpt=art.summary_raw,
             topic_key=topic_key,
             topic_label=topic_label,
+            issue_region=issue_region,
         )
 
 
@@ -2238,6 +2247,14 @@ def compact_digest_key_point(points: List[str], max_chars: int = 180) -> str:
     return compact_digest_text(points[0], max_chars=max_chars)
 
 
+def digest_region_label(item: AnalyzedArticle) -> str:
+    issue_region = (getattr(item, "issue_region", "") or "").strip()
+    source_region = (item.region or "").strip()
+    if issue_region and source_region and issue_region != source_region:
+        return f"{issue_region} (출처지역: {source_region})"
+    return issue_region or source_region or "-"
+
+
 def build_telegram_digest(
     analyzed: List[AnalyzedArticle],
     top_n: int = 5,
@@ -2261,6 +2278,7 @@ def build_telegram_digest(
         topic_label = getattr(item, "topic_label", "") or ""
         lines.append(f"{i}. {title}")
         lines.append(f"점수: {item.importance_score} | {item.category} | {item.source}")
+        lines.append(f"지역: {digest_region_label(item)}")
         if topic_label:
             lines.append(f"이슈: {compact_digest_text(topic_label, max_chars=90)}")
         if len(cluster.items) > 1:
