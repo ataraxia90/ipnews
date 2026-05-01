@@ -1945,11 +1945,64 @@ DIGEST_TOPIC_STOPWORDS = {
 }
 
 
+OFFICIAL_SOURCE_KEYWORDS = [
+    "ustr", "uspto", "whitehouse", "copyright office", "ftc", "itc",
+    "wipo", "wto", "oecd", "epo", "euipo", "upc",
+    "특허청", "무역대표부", "백악관", "연방거래위원회", "국제무역위원회",
+    "세계지식재산기구", "세계무역기구", "경제협력개발기구", "통합특허법원",
+    "일본 특허청", "일본 지식재산전략본부", "일본 경제산업성", "일본 총무성",
+    "일본 문화청", "일본 후생노동성", "일본 지적재산고등재판소",
+    "중국 상무부", "중국 시장감독관리총국", "중국 국가판권국",
+    "중국 최고인민법원", "중국 최고인민검찰원", "중국 지식재산국",
+    "베트남 지식재산청", "말레이시아 지식재산청", "싱가포르 지식재산청",
+    "캐나다 지식재산청", "호주 지식재산청", "필리핀 지식재산청",
+]
+
+MEDIA_SOURCE_KEYWORDS = [
+    "mlex", "iam", "ip watchdog", "patent salon", "patent result",
+    "ipr daily", "iprdaily", "asia ip law", "thomson reuters",
+    "bloomberg", "nikkei", "요미우리", "닛케이", "reuters",
+]
+
+OFFICIAL_DOMAIN_HINTS = [
+    ".gov", ".go.", ".gouv", ".gc.ca", ".gov.uk", ".europa.eu",
+    "wipo.int", "wto.org", "oecd.org", "epo.org", "euipo.europa.eu",
+    "unifiedpatentcourt.org", "courts.go.jp", "jpo.go.jp",
+]
+
+
 def normalize_topic_key(value: str) -> str:
     value = html.unescape(value or "").lower().strip()
     value = re.sub(r'[^a-z0-9]+', '-', value)
     value = re.sub(r'-+', '-', value).strip('-')
     return value
+
+
+def digest_source_authority_score(item: AnalyzedArticle) -> int:
+    source = normalize_topic_text(item.source or "")
+    url = (item.url or "").lower()
+    domain = urlparse(url).netloc.lower()
+
+    if any(domain_hint in domain for domain_hint in OFFICIAL_DOMAIN_HINTS):
+        return 4
+    if any(keyword in source for keyword in OFFICIAL_SOURCE_KEYWORDS):
+        return 4
+
+    if any(keyword in source or keyword in domain for keyword in MEDIA_SOURCE_KEYWORDS):
+        return 1
+
+    return 2
+
+
+def choose_digest_representative(items: List[AnalyzedArticle]) -> AnalyzedArticle:
+    return max(
+        items,
+        key=lambda item: (
+            digest_source_authority_score(item),
+            item.importance_score,
+            len(item.summary_ko or ""),
+        )
+    )
 
 
 def normalize_topic_text(text: str) -> str:
@@ -2050,6 +2103,16 @@ def cluster_digest_topics(items: List[AnalyzedArticle]) -> List[DigestTopicClust
                 representative_tokens=tokens,
             ))
 
+    for cluster in clusters:
+        cluster.representative = choose_digest_representative(cluster.items)
+
+    clusters.sort(
+        key=lambda cluster: (
+            max(item.importance_score for item in cluster.items),
+            cluster.representative.importance_score,
+        ),
+        reverse=True,
+    )
     return clusters
 
 
