@@ -315,6 +315,66 @@ IP_KEYWORDS = [
     'マドリッド' # 마드리드 (상표 국제출원)
 ]
 
+ANALYSIS_KEEP_KEYWORDS = [
+    'intellectual property', 'patent', 'trademark', 'copyright', 'trade secret',
+    'licensing', 'frand', 'standard essential', 'sep', 'counterfeit',
+    'piracy', 'infringement', 'ai', 'artificial intelligence', 'innovation',
+    'special 301', 'watch list', 'wipo', 'uspto', 'epo', 'euipo', 'kipo',
+    '지식재산', '지식재산권', '특허', '상표', '저작권', '영업비밀',
+    '위조', '침해', '라이선스', '표준필수', '인공지능',
+    '知的財産', '知財', '特許', '商標', '著作権', '侵害',
+    '知识产权', '专利', '商标', '版权', '著作权',
+]
+
+ANALYSIS_SKIP_PATTERNS = [
+    r'\bcareer(s)?\b',
+    r'\bhiring\b',
+    r'\brecruit(ment|ing)?\b',
+    r'\binternship\b',
+    r'\bstate dinner\b',
+    r'\bmemorial\b',
+    r'\bholiday\b',
+    r'\bpublic forum\b',
+    r'\bregistration opens\b',
+    r'\bmedia registration\b',
+    r'\bwebinar\b',
+    r'\bpodcast\b',
+    r'\bworkshop\b',
+    r'\bobesity[- ]drug\b',
+    r'\bdrug pricing\b',
+    r'\bfirst lady\b',
+    r'\bpresidential message\b',
+    r'\bpermit: authorizing\b',
+    r'採用',
+    r'求人',
+    r'落札者',
+    r'劳动节',
+    r'招聘',
+]
+
+BROAD_SEARCH_SOURCES = [
+    'Bloomberg',
+    'Thomson Reuters',
+    '닛케이 검색',
+    '요미우리 검색',
+    '인민망 검색',
+]
+
+TRUSTED_ANALYSIS_SOURCE_KEYWORDS = [
+    '특허청',
+    '지식재산청',
+    '지식재산기구',
+    '지식재산권 정보',
+    'USPTO',
+    'WIPO',
+    'EPO',
+    'EUIPO',
+    '통합특허법원',
+    '저작권청',
+    '국가판권국',
+]
+
+
 def _norm(s: str) -> str:
     return re.sub(r'\s+', ' ', (s or '')).strip().lower()
 
@@ -332,6 +392,36 @@ def looks_like_non_article(title: str, href: str) -> bool:
     if any(re.search(p, u) for p in BAD_URL_PATTERNS):
         return True
     return False
+
+
+def has_analysis_keep_keyword(text: str) -> bool:
+    t = _norm(html.unescape(text or ""))
+    return any(keyword.lower() in t for keyword in ANALYSIS_KEEP_KEYWORDS)
+
+
+def should_skip_claude_analysis(art: Article) -> Optional[str]:
+    content_text = " ".join([
+        art.title or "",
+        art.url or "",
+        art.summary_raw or "",
+    ])
+    source_text = art.source or ""
+    normalized = _norm(html.unescape(content_text))
+
+    if any(keyword in source_text for keyword in TRUSTED_ANALYSIS_SOURCE_KEYWORDS):
+        return None
+
+    if has_analysis_keep_keyword(content_text):
+        return None
+
+    if any(pattern in source_text for pattern in BROAD_SEARCH_SOURCES):
+        return "broad_search_without_ip_keyword"
+
+    for pattern in ANALYSIS_SKIP_PATTERNS:
+        if re.search(pattern, normalized, re.I):
+            return f"low_relevance_pattern:{pattern}"
+
+    return None
 
 
 def looks_like_article_url(href: str) -> bool:
@@ -2457,6 +2547,7 @@ def main():
             "analysis_success_count": 0,
             "analysis_failed_count": 0,
             "analysis_skipped_existing_count": 0,
+            "analysis_prefilter_skipped_count": 0,
             "seen_saved": False,
             "raw_articles_saved": False,
             "raw_review_digest_saved": False,
@@ -2473,6 +2564,7 @@ def main():
         },
         "sources": [],
         "analysis_errors": [],
+        "analysis_prefilter_skips": [],
     }
 
     new_articles: List[Article] = []
@@ -2631,6 +2723,19 @@ def main():
         if already_exists:
             print(f'  - 분석 스킵(이미 results.json 존재): {art.url}')
             run_log["summary"]["analysis_skipped_existing_count"] += 1
+            continue
+
+        prefilter_reason = should_skip_claude_analysis(art)
+        if prefilter_reason:
+            print(f'  - 분석 사전 제외({prefilter_reason}): {art.source} | {art.title[:60]}')
+            run_log["summary"]["analysis_prefilter_skipped_count"] += 1
+            if len(run_log["analysis_prefilter_skips"]) < 100:
+                run_log["analysis_prefilter_skips"].append({
+                    "source": art.source,
+                    "title": art.title,
+                    "url": art.url,
+                    "reason": prefilter_reason,
+                })
             continue
 
         try:
