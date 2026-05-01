@@ -2129,6 +2129,25 @@ def cluster_digest_topics(items: List[AnalyzedArticle]) -> List[DigestTopicClust
     return clusters
 
 
+def compact_digest_text(text: str, max_chars: int = 220) -> str:
+    text = html.unescape(text or "")
+    text = re.sub(r'\s+', ' ', text).strip()
+    if len(text) <= max_chars:
+        return text
+
+    cut = text[:max_chars + 1]
+    sentence_end = max(cut.rfind("."), cut.rfind("다."), cut.rfind("요."), cut.rfind("음."))
+    if sentence_end >= 80:
+        return cut[:sentence_end + 1].strip()
+    return text[:max_chars].rstrip() + "..."
+
+
+def compact_digest_key_point(points: List[str], max_chars: int = 180) -> str:
+    if not points:
+        return ""
+    return compact_digest_text(points[0], max_chars=max_chars)
+
+
 def build_telegram_digest(
     analyzed: List[AnalyzedArticle],
     top_n: int = 5,
@@ -2139,7 +2158,8 @@ def build_telegram_digest(
     selected_clusters = topic_clusters[:top_n]
 
     lines = []
-    lines.append("📌 오늘의 IP 정책·제도 동향 요약\n")
+    lines.append(f"IP 동향 Digest - 상위 {len(selected_clusters)}건")
+    lines.append("")
 
     if not selected_clusters:
         lines.append("오늘은 기준 점수 이상 신규 동향이 없습니다.")
@@ -2147,22 +2167,26 @@ def build_telegram_digest(
 
     for i, cluster in enumerate(selected_clusters, start=1):
         item = cluster.representative
-        lines.append(f"{i}. [{item.importance_score}점] {item.title}")
-        lines.append(f"   - 출처: {item.source} / 지역: {item.region}")
-        lines.append(f"   - 카테고리: {item.category}")
+        title = compact_digest_text(item.title, max_chars=120)
+        topic_label = getattr(item, "topic_label", "") or ""
+        lines.append(f"{i}. {title}")
+        lines.append(f"점수: {item.importance_score} | {item.category} | {item.source}")
+        if topic_label:
+            lines.append(f"이슈: {compact_digest_text(topic_label, max_chars=90)}")
         if len(cluster.items) > 1:
             related = [
                 f"{x.source}({x.importance_score}점)"
                 for x in cluster.items[1:4]
             ]
             suffix = f": {', '.join(related)}" if related else ""
-            lines.append(f"   - 같은 이슈 관련 기사: {len(cluster.items) - 1}건{suffix}")
+            lines.append(f"관련: {len(cluster.items) - 1}건{suffix}")
         if item.summary_ko:
-            lines.append(f"   - 요약: {item.summary_ko}")
+            lines.append(f"핵심: {compact_digest_text(item.summary_ko, max_chars=220)}")
         if item.key_points:
-            for kp in item.key_points[:4]:
-                lines.append(f"   - 시사점: {kp}")
-        lines.append(f"   - 원문: {item.url}")
+            key_point = compact_digest_key_point(item.key_points, max_chars=180)
+            if key_point:
+                lines.append(f"시사점: {key_point}")
+        lines.append(f"링크: {item.url}")
         lines.append("")
 
     return "\n".join(lines)
