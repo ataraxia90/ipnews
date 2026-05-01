@@ -2602,14 +2602,21 @@ def build_raw_review_messages(
             lines.append(f"   링크: {art.url}")
         lines.append("")
 
-    chunks = split_telegram_messages(lines, max_chars=max_chars)
+    # Reserve room for the per-message review header so every Telegram chunk
+    # starts with the same title instead of whichever article line was split first.
+    body_max_chars = max(1000, max_chars - 120)
+    chunks = split_telegram_messages(lines, max_chars=body_max_chars)
     total = len(chunks)
     titled = []
     for idx, chunk in enumerate(chunks, start=1):
+        header = f"IP Monitor 수집 검증 목록 - {generated_date} ({idx}/{total})"
         chunk_lines = chunk.splitlines()
-        if chunk_lines:
-            chunk_lines[0] = f"{chunk_lines[0]} ({idx}/{total})"
-        titled.append("\n".join(chunk_lines))
+        if chunk_lines and chunk_lines[0].startswith("IP Monitor 수집 검증 목록 - "):
+            chunk_lines = chunk_lines[1:]
+            if chunk_lines and not chunk_lines[0].strip():
+                chunk_lines = chunk_lines[1:]
+        body = "\n".join(chunk_lines).strip()
+        titled.append(f"{header}\n\n{body}" if body else header)
     return titled
 
 

@@ -41,7 +41,7 @@
 
 따라서 전체 아티클 나열 기능은 유지하되, Telegram 메시지는 사람이 읽을 수 있는 구조로 개선하고, 전체 목록 검증은 `telegram_raw_review.txt`, `raw_articles.json`, Actions artifact를 함께 활용한다.
 
-- [ ] R1. review 메시지 chunk 헤더 개선
+- [x] R1. review 메시지 chunk 헤더 개선
   - 모든 메시지 첫 줄을 고정 헤더로 시작
   - 예: `IP Monitor 수집 검증 - 2026-05-01 (2/8)`
   - 기사 제목이나 링크 줄에 `(2/8)`이 붙지 않게 수정
