@@ -52,7 +52,7 @@
   - Telegram: 요약, 이상징후, 소스별 샘플 중심
   - Artifact: 전체 아티클 목록 유지
   - 파일럿 중에는 전체 목록도 계속 `telegram_raw_review.txt`에 저장
-- [ ] R4. review 첫 메시지를 요약 리포트화
+- [x] R4. review 첫 메시지를 요약 리포트화
   - 신규 기사 수
   - 성공/빈/실패 소스 수
   - `max_items_reached` 소스 수

@@ -2537,6 +2537,17 @@ def split_telegram_messages(lines: List[str], max_chars: int = 3500) -> List[str
 REVIEW_REGION_ORDER = ["미국", "일본", "중국", "유럽", "국제기구", "기타"]
 
 
+def review_title_needs_attention(title: Optional[str]) -> bool:
+    text = re.sub(r"\s+", " ", str(title or "")).strip()
+    if not text:
+        return True
+    if "\ufffd" in text:
+        return True
+    if text.endswith(("...", "…")):
+        return True
+    return False
+
+
 def normalize_review_region(region: Optional[str]) -> str:
     text = (region or "").strip()
     if "미국" in text:
@@ -2552,10 +2563,82 @@ def normalize_review_region(region: Optional[str]) -> str:
     return "기타"
 
 
+def build_raw_review_summary_lines(
+    articles: List[Article],
+    source_check_records: Optional[List[Dict[str, Any]]] = None,
+) -> List[str]:
+    source_check_records = source_check_records or []
+    total_sources = len(source_check_records)
+    ok_sources = sum(1 for r in source_check_records if r.get("status") == "ok")
+    empty_sources = sum(1 for r in source_check_records if r.get("status") == "empty")
+    failed_sources = sum(1 for r in source_check_records if r.get("status") == "fail")
+    max_item_sources = [r for r in source_check_records if r.get("max_items_reached")]
+    missing_date_articles = [a for a in articles if not str(a.published or "").strip()]
+    title_attention_articles = [a for a in articles if review_title_needs_attention(a.title)]
+
+    lines = [
+        "요약 리포트",
+        "",
+        f"- 신규 기사: {len(articles)}개",
+        f"- 소스 상태: 성공 {ok_sources}개 / 빈값 {empty_sources}개 / 실패 {failed_sources}개 / 전체 {total_sources}개",
+        f"- max_items 도달 소스: {len(max_item_sources)}개",
+        f"- 날짜 누락 기사: {len(missing_date_articles)}개",
+        f"- 제목 잘림/깨짐 의심: {len(title_attention_articles)}개",
+    ]
+
+    problem_sources = [
+        r for r in source_check_records
+        if r.get("status") in ("fail", "empty")
+    ]
+    if problem_sources:
+        lines.extend(["", "수집 실패/빈값 소스"])
+        for record in problem_sources[:10]:
+            status = record.get("status", "-")
+            name = record.get("name", "-")
+            error = re.sub(r"\s+", " ", record.get("error") or "").strip()
+            suffix = f" - {error[:90]}" if error else ""
+            lines.append(f"- [{status}] {name}{suffix}")
+        if len(problem_sources) > 10:
+            lines.append(f"- 외 {len(problem_sources) - 10}개")
+
+    if max_item_sources:
+        lines.extend(["", "max_items 도달 소스"])
+        for record in max_item_sources[:10]:
+            name = record.get("name", "-")
+            count = record.get("count", 0)
+            max_items = record.get("max_items", "-")
+            lines.append(f"- {name}: {count}/{max_items}개")
+        if len(max_item_sources) > 10:
+            lines.append(f"- 외 {len(max_item_sources) - 10}개")
+
+    if missing_date_articles:
+        lines.extend(["", "날짜 누락 샘플"])
+        for art in missing_date_articles[:5]:
+            title = re.sub(r"\s+", " ", str(art.title or "")).strip()
+            if len(title) > 90:
+                title = title[:87].rstrip() + "..."
+            lines.append(f"- {art.source} | {title}")
+        if len(missing_date_articles) > 5:
+            lines.append(f"- 외 {len(missing_date_articles) - 5}개")
+
+    if title_attention_articles:
+        lines.extend(["", "제목 확인 필요 샘플"])
+        for art in title_attention_articles[:5]:
+            title = re.sub(r"\s+", " ", str(art.title or "")).strip()
+            if len(title) > 90:
+                title = title[:87].rstrip() + "..."
+            lines.append(f"- {art.source} | {title or '(빈 제목)'}")
+        if len(title_attention_articles) > 5:
+            lines.append(f"- 외 {len(title_attention_articles) - 5}개")
+
+    return lines
+
+
 def build_raw_review_messages(
     articles: List[Article],
     generated_at: Optional[str] = None,
-    max_chars: int = 3500
+    max_chars: int = 3500,
+    source_check_records: Optional[List[Dict[str, Any]]] = None,
 ) -> List[str]:
     generated_at = generated_at or time.strftime("%Y-%m-%d %H:%M")
     generated_date = generated_at.split()[0]
@@ -2605,7 +2688,12 @@ def build_raw_review_messages(
     # Reserve room for the per-message review header so every Telegram chunk
     # starts with the same title instead of whichever article line was split first.
     body_max_chars = max(1000, max_chars - 120)
-    chunks = split_telegram_messages(lines, max_chars=body_max_chars)
+    summary_lines = build_raw_review_summary_lines(
+        articles,
+        source_check_records=source_check_records,
+    )
+    chunks = split_telegram_messages(summary_lines, max_chars=body_max_chars)
+    chunks.extend(split_telegram_messages(lines, max_chars=body_max_chars))
     total = len(chunks)
     titled = []
     for idx, chunk in enumerate(chunks, start=1):
@@ -2914,7 +3002,10 @@ def main():
     print(f'[DEBUG] 수집 원본 데이터 {len(new_articles)}개가 {RAW_RESULTS_PATH}에 저장되었습니다.')
     run_log["summary"]["raw_articles_saved"] = True
 
-    raw_review_messages = build_raw_review_messages(new_articles)
+    raw_review_messages = build_raw_review_messages(
+        new_articles,
+        source_check_records=source_check_records,
+    )
     save_raw_review_messages(raw_review_messages, RAW_REVIEW_DIGEST_PATH)
     raw_review_telegram_started = time.time()
     send_telegram_message_chunks(
