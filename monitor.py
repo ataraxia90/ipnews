@@ -813,13 +813,16 @@ def extract_date_from_text(text: str) -> Optional[str]:
         r'(?P<y>20\d{2})[-/.](?P<m>\d{1,2})[-/.](?P<d>\d{1,2})',
         r'(?P<y>20\d{2})年(?P<m>\d{1,2})月(?P<d>\d{1,2})日',
         r'(?P<d>\d{1,2})/(?P<m>\d{1,2})/(?P<y>20\d{2})',
-        r'(?P<d>\d{1,2})\s+(?P<mon>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?P<y>20\d{2})',
-        r'(?P<mon>January|February|March|April|May|June|July|August|September|October|November|December)\s+(?P<d>\d{1,2}),?\s+(?P<y>20\d{2})',
+        r'(?P<d>\d{1,2})\s+(?P<mon>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Sept|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(?P<y>20\d{2})',
+        r'(?P<mon>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Sept|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(?P<d>\d{1,2}),?\s+(?P<y>20\d{2})',
     ]
     month_names = {
         "january": 1, "february": 2, "march": 3, "april": 4,
         "may": 5, "june": 6, "july": 7, "august": 8,
         "september": 9, "october": 10, "november": 11, "december": 12,
+        "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6,
+        "jul": 7, "aug": 8, "sep": 9, "sept": 9, "oct": 10,
+        "nov": 11, "dec": 12,
     }
 
     for pattern in patterns:
@@ -2563,9 +2566,69 @@ def normalize_review_region(region: Optional[str]) -> str:
     return "기타"
 
 
+def extract_time_from_text(text: str) -> Optional[str]:
+    if not text:
+        return None
+    normalized_text = text.translate(str.maketrans("０１２３４５６７８９：", "0123456789:"))
+    match = re.search(r'(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?(?!\d)', normalized_text)
+    if not match:
+        return None
+    return f"{int(match.group(1)):02d}:{match.group(2)}"
+
+
+def parse_generated_datetime(generated_at: Optional[str]) -> datetime:
+    if not generated_at:
+        return datetime.now()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(generated_at, fmt)
+        except ValueError:
+            continue
+    return datetime.now()
+
+
+def format_review_date(
+    published: Any,
+    url: str = "",
+    generated_at: Optional[str] = None,
+) -> str:
+    text = re.sub(r"\s+", " ", str(published or "")).strip()
+    url_date = extract_date_from_url(url)
+    date = extract_date_from_text(text)
+    time_part = extract_time_from_text(text)
+
+    if date:
+        return f"{date} {time_part}" if time_part else date
+
+    if time_part and url_date:
+        return f"{url_date} {time_part}"
+
+    relative_match = re.search(
+        r'(\d+)\s*(min|mins|minute|minutes|hr|hrs|hour|hours|day|days)\s+ago',
+        text.lower(),
+    )
+    if relative_match:
+        amount = int(relative_match.group(1))
+        unit = relative_match.group(2)
+        base = parse_generated_datetime(generated_at)
+        if unit.startswith("min"):
+            dt = base - timedelta(minutes=amount)
+        elif unit.startswith(("hr", "hour")):
+            dt = base - timedelta(hours=amount)
+        else:
+            dt = base - timedelta(days=amount)
+        return dt.strftime("%Y-%m-%d")
+
+    if url_date:
+        return url_date
+
+    return text or "-"
+
+
 def build_raw_review_summary_lines(
     articles: List[Article],
     source_check_records: Optional[List[Dict[str, Any]]] = None,
+    generated_at: Optional[str] = None,
 ) -> List[str]:
     source_check_records = source_check_records or []
     total_sources = len(source_check_records)
@@ -2573,7 +2636,10 @@ def build_raw_review_summary_lines(
     empty_sources = sum(1 for r in source_check_records if r.get("status") == "empty")
     failed_sources = sum(1 for r in source_check_records if r.get("status") == "fail")
     max_item_sources = [r for r in source_check_records if r.get("max_items_reached")]
-    missing_date_articles = [a for a in articles if not str(a.published or "").strip()]
+    missing_date_articles = [
+        a for a in articles
+        if format_review_date(a.published, a.url, generated_at=generated_at) == "-"
+    ]
     title_attention_articles = [a for a in articles if review_title_needs_attention(a.title)]
 
     lines = [
@@ -2681,7 +2747,7 @@ def build_raw_review_messages(
             if len(title) > 160:
                 title = title[:157].rstrip() + "..."
             lines.append(f"{idx}. {title}")
-            lines.append(f"   날짜: {art.published or '-'}")
+            lines.append(f"   날짜: {format_review_date(art.published, art.url, generated_at=generated_at)}")
             lines.append(f"   링크: {art.url}")
         lines.append("")
 
@@ -2691,6 +2757,7 @@ def build_raw_review_messages(
     summary_lines = build_raw_review_summary_lines(
         articles,
         source_check_records=source_check_records,
+        generated_at=generated_at,
     )
     chunks = split_telegram_messages(summary_lines, max_chars=body_max_chars)
     chunks.extend(split_telegram_messages(lines, max_chars=body_max_chars))
