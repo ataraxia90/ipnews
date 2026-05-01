@@ -48,19 +48,12 @@
 - [x] R2. source 단위 분할 적용
   - 한 소스 묶음이 메시지 중간에서 끊기지 않도록 개선
   - 너무 긴 소스는 별도 메시지로 나누되 소스 헤더를 반복
-- [ ] R3. Telegram review와 artifact review 역할 분리
-  - Telegram: 요약, 이상징후, 소스별 샘플 중심
-  - Artifact: 전체 아티클 목록 유지
-  - 파일럿 중에는 전체 목록도 계속 `telegram_raw_review.txt`에 저장
 - [x] R4. review 첫 메시지를 요약 리포트화
   - 신규 기사 수
   - 성공/빈/실패 소스 수
   - `max_items_reached` 소스 수
   - 날짜 누락 기사 수
   - 제목 깨짐 의심 수
-- [ ] R5. 소스별 Telegram 표시 개수 제한 검토
-  - 파일럿 중 전체 목록 검증 필요가 있으므로 제한은 Telegram 표시용으로만 적용
-  - 전체 목록은 artifact에 보존
 - [x] R6. 확인 필요 섹션 추가
   - 수집 실패/빈 소스
   - `max_items_reached: true` 소스
@@ -218,6 +211,13 @@
 
 ## 장기 과제
 
+- Review 채널 운영 정책 정리
+  - Telegram review와 artifact review 역할 분리 검토
+  - Telegram: 요약, 이상징후, 소스별 샘플 중심
+  - Artifact: 전체 아티클 목록 유지
+  - 파일럿 중에는 전체 목록도 계속 `telegram_raw_review.txt`에 저장
+  - 소스별 Telegram 표시 개수 제한 검토
+  - 전체 목록 검증 필요가 있으므로 제한은 Telegram 표시용으로만 적용하고, 전체 목록은 artifact에 보존
 - 관리자 웹페이지 구축
   - 오늘 분석 결과 목록
   - 상태/지역/중요도 필터
