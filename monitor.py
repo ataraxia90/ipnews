@@ -61,6 +61,13 @@ class AnalyzedArticle:
     topic_key: str = ""
     topic_label: str = ""
     issue_region: str = ""
+    digest_bullets: Optional[List[str]] = None
+    claude_model: str = ""
+    claude_input_tokens: int = 0
+    claude_output_tokens: int = 0
+    claude_cache_creation_input_tokens: int = 0
+    claude_cache_read_input_tokens: int = 0
+    claude_estimated_cost_usd: float = 0.0
 
 
 @dataclass
@@ -78,6 +85,14 @@ SENT_DIGEST_TOPICS_PATH = 'data/sent_digest_topics.json'
 DIGEST_PATH = 'data/telegram_digest.txt'
 RAW_REVIEW_DIGEST_PATH = 'data/telegram_raw_review.txt'
 SOURCE_CHECK_REPORT_PATH = 'data/source_check_report.json'
+
+# Standard Claude Sonnet API pricing, USD per million tokens.
+# The current prompt does not use prompt caching, but cache fields are recorded
+# if Anthropic returns them.
+CLAUDE_SONNET_INPUT_USD_PER_MTOK = 3.0
+CLAUDE_SONNET_OUTPUT_USD_PER_MTOK = 15.0
+CLAUDE_SONNET_CACHE_CREATE_USD_PER_MTOK = 3.75
+CLAUDE_SONNET_CACHE_READ_USD_PER_MTOK = 0.30
 FAILED_SOURCES_PATH = 'data/failed_sources.yaml'
 RUN_LOG_DIR = 'data/run_logs'
 SUPABASE_STATE_TABLE = 'monitor_state'
@@ -1969,6 +1984,21 @@ class ClaudeClient:
         self.client = anthropic.Anthropic(api_key=api_key)
         self.model = model
 
+    def estimate_cost_usd(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        cache_creation_input_tokens: int = 0,
+        cache_read_input_tokens: int = 0,
+    ) -> float:
+        cost = (
+            input_tokens * CLAUDE_SONNET_INPUT_USD_PER_MTOK
+            + output_tokens * CLAUDE_SONNET_OUTPUT_USD_PER_MTOK
+            + cache_creation_input_tokens * CLAUDE_SONNET_CACHE_CREATE_USD_PER_MTOK
+            + cache_read_input_tokens * CLAUDE_SONNET_CACHE_READ_USD_PER_MTOK
+        ) / 1_000_000
+        return round(cost, 6)
+
     def analyze_article(self, art: Article) -> AnalyzedArticle:
         prompt = f"""
 당신은 지식재산(IP) 정책·제도 동향 분석가입니다.
@@ -1997,12 +2027,17 @@ class ClaudeClient:
 5. 핵심 시사점 2~3문장을 작성하라.
    - 원문에 한국이 직접 언급되지 않은 경우 시사점은 "한국에 대한 직접 영향"이 아니라 "한국 정책당국/기업이 참고할 만한 간접 동향" 수준으로 표현하라.
    - 한국 관련성은 제도 비교, 통상 환경, 해외 진출 기업 리스크 등 간접적 의미로만 설명하라.
-6. '한국'이나 'South Korea'를 직접 언급하고 있으면 중요도 점수를 상향하고, 요약에 해당 내용을 포함하라. 직접 언급이 없으면 한국 관련성만으로 과도하게 점수를 올리지 마라.
-7. 같은 사건·보고서·판례·법안·정책 발표·기업 발표를 묶을 수 있도록 topic_key와 topic_label을 작성하라.
+6. 텔레그램 digest에 바로 넣을 수 있는 개조식 항목 digest_bullets를 2~4개 작성하라.
+   - 모든 기사에 "배경/결정/쟁점" 같은 동일한 틀을 강제하지 마라.
+   - 기사 성격에 맞춰 "발표", "결정", "변경", "쟁점", "영향", "일정", "참고" 등 자연스러운 라벨을 선택하라.
+   - 각 항목은 "라벨: 내용" 형식의 한 문장으로 작성한다.
+   - summary_ko보다 짧고 스캔하기 쉽게 작성하되, 원문에 없는 사실을 만들지 마라.
+7. '한국'이나 'South Korea'를 직접 언급하고 있으면 중요도 점수를 상향하고, 요약에 해당 내용을 포함하라. 직접 언급이 없으면 한국 관련성만으로 과도하게 점수를 올리지 마라.
+8. 같은 사건·보고서·판례·법안·정책 발표·기업 발표를 묶을 수 있도록 topic_key와 topic_label을 작성하라.
    - topic_key는 영문 소문자 slug로 작성한다. 예: "2026-ustr-special-301-report", "uspto-gen-ai-patent-examination"
    - topic_label은 사람이 읽기 쉬운 짧은 이슈명으로 작성한다. 예: "USTR 2026 Special 301 Report"
    - 같은 이슈를 다른 매체가 보도한 경우 동일한 topic_key가 나오도록 일반적이고 안정적인 이름을 사용한다.
-8. issue_region을 작성하라.
+9. issue_region을 작성하라.
    - issue_region은 출처 매체의 소재지가 아니라 기사에서 다루는 실제 정책·분쟁·시장 이슈의 대상 지역이다.
    - 예: 미국 매체가 EU의 IP 정책을 다루면 issue_region은 "유럽" 또는 "EU"로 작성한다.
    - 전세계 또는 다자기구 이슈면 "국제" 또는 "국제기구"로 작성한다.
@@ -2022,6 +2057,7 @@ JSON으로만 응답하라:
   "category": "AI규제",
   "summary_ko": "…",
   "key_points": ["…"],
+  "digest_bullets": ["발표: …", "쟁점: …", "참고: …"],
   "topic_key": "uspto-ai-patent-examination",
   "topic_label": "USPTO AI Patent Examination",
   "issue_region": "미국"
@@ -2035,6 +2071,17 @@ JSON으로만 응답하라:
         )
 
         text = resp.content[0].text
+        usage = getattr(resp, "usage", None)
+        input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+        output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+        cache_creation_input_tokens = int(getattr(usage, "cache_creation_input_tokens", 0) or 0)
+        cache_read_input_tokens = int(getattr(usage, "cache_read_input_tokens", 0) or 0)
+        estimated_cost_usd = self.estimate_cost_usd(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
+        )
         m = re.search(r'\{.*\}', text, re.S)
         data = {}
         if m:
@@ -2052,6 +2099,10 @@ JSON으로만 응답하라:
         if not isinstance(key_points, list):
             key_points = [str(key_points)]
         key_points = [str(x).strip() for x in key_points if str(x).strip()]
+        digest_bullets = data.get('digest_bullets', [])
+        if not isinstance(digest_bullets, list):
+            digest_bullets = [str(digest_bullets)]
+        digest_bullets = [str(x).strip() for x in digest_bullets if str(x).strip()]
         topic_key = normalize_topic_key(str(data.get('topic_key', '')).strip())
         topic_label = str(data.get('topic_label', '')).strip()
         issue_region = str(data.get('issue_region', '')).strip() or art.region
@@ -2070,6 +2121,13 @@ JSON으로만 응답하라:
             topic_key=topic_key,
             topic_label=topic_label,
             issue_region=issue_region,
+            digest_bullets=digest_bullets,
+            claude_model=self.model,
+            claude_input_tokens=input_tokens,
+            claude_output_tokens=output_tokens,
+            claude_cache_creation_input_tokens=cache_creation_input_tokens,
+            claude_cache_read_input_tokens=cache_read_input_tokens,
+            claude_estimated_cost_usd=estimated_cost_usd,
         )
 
 
@@ -2544,24 +2602,28 @@ def render_telegram_digest(
         title = compact_digest_text(item.title, max_chars=120)
         topic_label = getattr(item, "topic_label", "") or ""
         lines.append(f"{i}. {title}")
-        lines.append(f"점수: {item.importance_score} | {item.category} | {item.source}")
-        lines.append(f"지역: {digest_region_label(item)}")
+        lines.append(f"- 점수: {item.importance_score} | {item.category} | {item.source}")
+        lines.append(f"- 지역: {digest_region_label(item)}")
         if topic_label:
-            lines.append(f"이슈: {compact_digest_text(topic_label, max_chars=90)}")
+            lines.append(f"- 이슈: {compact_digest_text(topic_label, max_chars=90)}")
         if len(cluster.items) > 1:
             related = [
                 f"{x.source}({x.importance_score}점)"
                 for x in cluster.items[1:4]
             ]
             suffix = f": {', '.join(related)}" if related else ""
-            lines.append(f"관련: {len(cluster.items) - 1}건{suffix}")
-        if item.summary_ko:
-            lines.append(f"핵심: {compact_digest_text(item.summary_ko, max_chars=220)}")
-        if item.key_points:
+            lines.append(f"- 관련: {len(cluster.items) - 1}건{suffix}")
+        digest_bullets = getattr(item, "digest_bullets", None) or []
+        if digest_bullets:
+            for bullet in digest_bullets[:4]:
+                lines.append(f"- {compact_digest_text(bullet, max_chars=180)}")
+        elif item.summary_ko:
+            lines.append(f"- 핵심: {compact_digest_text(item.summary_ko, max_chars=220)}")
+        if not digest_bullets and item.key_points:
             key_point = compact_digest_key_point(item.key_points, max_chars=180)
             if key_point:
-                lines.append(f"시사점: {key_point}")
-        lines.append(f"링크: {item.url}")
+                lines.append(f"- 시사점: {key_point}")
+        lines.append(f"- 링크: {item.url}")
         lines.append("")
 
     return "\n".join(lines)
@@ -3107,6 +3169,11 @@ def main():
             "analysis_failed_count": 0,
             "analysis_skipped_existing_count": 0,
             "analysis_prefilter_skipped_count": 0,
+            "claude_input_tokens": 0,
+            "claude_output_tokens": 0,
+            "claude_cache_creation_input_tokens": 0,
+            "claude_cache_read_input_tokens": 0,
+            "claude_estimated_cost_usd": 0.0,
             "seen_saved": False,
             "raw_articles_saved": False,
             "raw_review_digest_saved": False,
@@ -3311,6 +3378,15 @@ def main():
             analyzed = claude.analyze_article(art)
             analyzed_items.append(analyzed)
             run_log["summary"]["analysis_success_count"] += 1
+            run_log["summary"]["claude_input_tokens"] += analyzed.claude_input_tokens
+            run_log["summary"]["claude_output_tokens"] += analyzed.claude_output_tokens
+            run_log["summary"]["claude_cache_creation_input_tokens"] += analyzed.claude_cache_creation_input_tokens
+            run_log["summary"]["claude_cache_read_input_tokens"] += analyzed.claude_cache_read_input_tokens
+            run_log["summary"]["claude_estimated_cost_usd"] = round(
+                float(run_log["summary"]["claude_estimated_cost_usd"])
+                + analyzed.claude_estimated_cost_usd,
+                6,
+            )
 
             if not already_exists:
                 existing_urls.add(art.url)
