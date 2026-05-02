@@ -2,8 +2,8 @@ name: Run IP Monitor
 
 on:
   schedule:
-    # UTC 00:00 = Korea 09:00
-    - cron: "0 0 * * *"
+    # UTC 23:37 = Korea 08:37. Avoid the top-of-hour Actions schedule rush.
+    - cron: "37 23 * * *"
   workflow_dispatch:
 
 jobs:

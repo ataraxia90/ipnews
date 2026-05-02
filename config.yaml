@@ -37,7 +37,6 @@ sources:
     monitor_url: https://www.uspto.gov/json/news-listing/data.json
     mode: json_api  # <--- 이 부분을 새로 추가한 json_api 모드로 변경
     enabled: true
-    max_items: 5
     priority: 1
 
 
@@ -47,7 +46,6 @@ sources:
     monitor_url: https://ustr.gov/about-us/policy-offices/press-office/press-releases
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     row_selector: "main .views-row, main .item-list li, main article"
     title_selector: "a[href]"
@@ -59,7 +57,6 @@ sources:
     monitor_url: https://www.whitehouse.gov/news/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: '.wp-block-post'
@@ -72,7 +69,6 @@ sources:
     monitor_url: https://www.copyright.gov/rss/newsnet.xml
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: 미국 국제무역위원회(ITC)
@@ -81,7 +77,6 @@ sources:
     monitor_url: https://www.usitc.gov/news_releases
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: ".view-content a"
 
@@ -91,7 +86,6 @@ sources:
     monitor_url: https://www.ftc.gov/news-events/news/press-releases
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: "#block-system-main-block--3 h2 a, #block-system-main-block--3 h3 a"
 
@@ -101,7 +95,6 @@ sources:
     monitor_url: https://www.uschamber.com/about/newsroom
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     row_selector: 'div[data-component="cardfeed"]'
     title_selector: 'a[href]'
@@ -114,7 +107,6 @@ sources:
     monitor_url: https://ipwatchdog.com/feed/
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: Patently-O
@@ -123,7 +115,6 @@ sources:
     monitor_url: https://patentlyo.com/feed
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: mlex
@@ -132,7 +123,6 @@ sources:
     monitor_url: https://www.mlex.com/mlex/intellectual-property/rss
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: IAM
@@ -141,7 +131,6 @@ sources:
     monitor_url: https://www.iam-media.com/rss
     mode: rss
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: ''
 
@@ -151,7 +140,6 @@ sources:
     monitor_url: "https://www.thomsonreuters.com/en/search-results#q=Intellectual%20Property&tab=All&sortCriteria=%40tr_wpublishedtime%20descending"
     mode: playwright
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: 'a[href]'
     row_selector: '.dig-search-resultlist-default-container'
@@ -163,7 +151,6 @@ sources:
     monitor_url: "https://www.thomsonreuters.com/en/search-results#q=Patent&tab=All&sortCriteria=%40tr_wpublishedtime%20descending"
     mode: playwright
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: 'a[href]'
     row_selector: '.dig-search-resultlist-default-container'
@@ -175,7 +162,6 @@ sources:
     monitor_url: "https://www.thomsonreuters.com/en/search-results#q=Trademark&tab=All&sortCriteria=%40tr_wpublishedtime%20descending"
     mode: playwright
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: 'a[href]'
     row_selector: '.dig-search-resultlist-default-container'
@@ -187,7 +173,6 @@ sources:
     monitor_url: "https://www.thomsonreuters.com/en/search-results#q=Copyright&tab=All&sortCriteria=%40tr_wpublishedtime%20descending"
     mode: playwright
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: 'a[href]'
     row_selector: '.dig-search-resultlist-default-container'
@@ -199,7 +184,6 @@ sources:
     monitor_url: "https://www.bloomberg.com/search?query=Intellectual%20Property"
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: 'div[class*="SearchResult_resultContainer"]'
@@ -212,7 +196,6 @@ sources:
     monitor_url: "https://www.bloomberg.com/search?query=Patent"
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: 'div[class*="SearchResult_resultContainer"]'
@@ -225,7 +208,6 @@ sources:
     monitor_url: "https://www.bloomberg.com/search?query=Trademark"
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: 'div[class*="SearchResult_resultContainer"]'
@@ -238,7 +220,6 @@ sources:
     monitor_url: "https://www.bloomberg.com/search?query=Copyright"
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: 'div[class*="SearchResult_resultContainer"]'
@@ -255,7 +236,6 @@ sources:
     monitor_url: https://www.cnipa.gov.cn/col/col74/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: "li"
     title_selector: "a[href]"
@@ -267,7 +247,6 @@ sources:
     monitor_url: https://www.cnipa.gov.cn/col/col75/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: "li"
     title_selector: "a[href]"
@@ -279,7 +258,6 @@ sources:
     monitor_url: https://www.cnipa.gov.cn/col/col66/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: "li"
     title_selector: "a[href]"
@@ -291,7 +269,6 @@ sources:
     monitor_url: https://www.cnipa.gov.cn/col/col53/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: "li"
     title_selector: "a[href]"
@@ -303,7 +280,6 @@ sources:
     monitor_url: https://www.cnipa.gov.cn/col/col91/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: "li"
     title_selector: "a[href]"
@@ -315,7 +291,6 @@ sources:
     monitor_url: https://www.cnipa.gov.cn/col/col94/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: "li"
     title_selector: "a[href]"
@@ -327,7 +302,6 @@ sources:
     monitor_url: https://www.cnipa.gov.cn/col/col55/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: "li"
     title_selector: "a[href]"
@@ -339,7 +313,6 @@ sources:
     monitor_url: https://www.mofcom.gov.cn/xwfb/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: ".listCon .txtList_01 li"
     title_selector: "a[href]"
@@ -351,7 +324,6 @@ sources:
     monitor_url: https://www.mofcom.gov.cn/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: ".j-slideTxtBox .u-tab-ct.f-dn .lColList_01 li"
     title_selector: "a[href]"
@@ -362,7 +334,6 @@ sources:
     monitor_url: https://www.mofcom.gov.cn/zwgk/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: ".gkList_02 li"
     title_selector: "a[href]"
@@ -374,7 +345,6 @@ sources:
     monitor_url: https://www.samr.gov.cn/xw/zj/index.html
     mode: playwright
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: ".Three_zhnlist_02 > ul"
     title_selector: ".nav04Left02_content a[href]"
@@ -386,7 +356,6 @@ sources:
     monitor_url: https://www.samr.gov.cn/zw/zjwj/zcjd/index.html
     mode: playwright
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: ".Three_zhnlist_02 > ul"
     title_selector: ".nav04Left02_content a[href]"
@@ -398,7 +367,6 @@ sources:
     monitor_url: https://www.ncac.gov.cn/xxfb/tzgg/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: "li.ellipsis"
     title_selector: "a[href]"
@@ -410,7 +378,6 @@ sources:
     monitor_url: https://www.ncac.gov.cn/xxfb/ywxx/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: "li.ellipsis"
     title_selector: "a[href]"
@@ -422,7 +389,6 @@ sources:
     monitor_url: https://www.ncac.gov.cn/xxfb/yjdt/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: "li.ellipsis"
     title_selector: "a[href]"
@@ -434,7 +400,6 @@ sources:
     monitor_url: https://www.court.gov.cn/zixun/gengduo/24.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: ".sec_list ul li"
     title_selector: 'a[href*="/xiangqing/"]'
@@ -446,7 +411,6 @@ sources:
     monitor_url: https://www.court.gov.cn/fabu/gengduo/17.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: ".sec_list ul li"
     title_selector: 'a[href*="/xiangqing/"]'
@@ -458,7 +422,6 @@ sources:
     monitor_url: https://www.court.gov.cn/fabu/gengduo/18.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: ".sec_list ul li"
     title_selector: 'a[href*="/xiangqing/"]'
@@ -470,7 +433,6 @@ sources:
     monitor_url: https://www.court.gov.cn/fabu/gengduo/19.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: ".sec_list ul li"
     title_selector: 'a[href*="/xiangqing/"]'
@@ -482,7 +444,6 @@ sources:
     monitor_url: https://www.court.gov.cn/fabu/gengduo/16.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: ".sec_list ul li"
     title_selector: 'a[href*="/xiangqing/"]'
@@ -494,7 +455,6 @@ sources:
     monitor_url: https://www.spp.gov.cn/spp/gjybs/index.shtml
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: ".commonList_con ul.li_line li"
     title_selector: "a[href]"
@@ -506,7 +466,6 @@ sources:
     monitor_url: https://www.spp.gov.cn/spp/zdgz/index.shtml
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: ".commonList_con ul.li_line li"
     title_selector: "a[href]"
@@ -518,7 +477,6 @@ sources:
     monitor_url: https://www.iprdaily.cn/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     # 'news_' 또는 'article_' 로 시작하는 링크를 잡습니다.
     list_selector: "a[href*='news_'], a[href*='article_']"
@@ -529,7 +487,6 @@ sources:
     monitor_url: http://cnipr.com/sj/zx/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: 'li.zx_cont_list1'
@@ -542,7 +499,6 @@ sources:
     monitor_url: https://www.iprchn.com/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: "a[href*='cipnews/news_content.aspx?newsId=']"
 
@@ -552,7 +508,6 @@ sources:
     monitor_url: https://search.people.cn/s?keyword=%E7%9F%A5%E8%AF%86%E4%BA%A7%E6%9D%83
     mode: people_search_api
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: ''
 
@@ -562,7 +517,6 @@ sources:
     monitor_url: https://search.people.cn/s?keyword=%E4%B8%93%E5%88%A9
     mode: people_search_api
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: ''
 
@@ -572,7 +526,6 @@ sources:
     monitor_url: https://search.people.cn/s?keyword=%E5%95%86%E6%A0%87
     mode: people_search_api
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: ''
 
@@ -582,7 +535,6 @@ sources:
     monitor_url: https://search.people.cn/s?keyword=%E7%89%88%E6%9D%83
     mode: people_search_api
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: ''
 
@@ -592,7 +544,6 @@ sources:
     monitor_url: https://www.jpo.go.jp/news/shinchaku/koshin/index.html  # <--- URL이 이 주소가 맞는지 확인하세요!
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     # list_news 클래스를 가진 테이블 안의 a 태그만 수집
     list_selector: ".list_news a"
@@ -603,7 +554,6 @@ sources:
     monitor_url: https://www.cas.go.jp/jp/seisakukaigi/titeki2/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: a[href]
 
@@ -613,7 +563,6 @@ sources:
     monitor_url: https://www.meti.go.jp/press/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: 일본 총무성
@@ -622,7 +571,6 @@ sources:
     monitor_url: https://www.soumu.go.jp/menu_kyotsuu/whatsnew/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: "h2.recent_list + dl.icon dd"
     title_selector: 'a[href*="/menu_news/s-news/"]'
@@ -634,7 +582,6 @@ sources:
     monitor_url: https://www.bunka.go.jp/koho_hodo_oshirase/hodohappyo/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: "#main_contents a[href*='/hodohappyo/']:not([href$='index.html'])"
 
@@ -645,7 +592,6 @@ sources:
     monitor_url: https://www.mhlw.go.jp/stf/new-info/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: "ul.m-listNews > li"
     title_selector: "a[href]"
@@ -657,7 +603,6 @@ sources:
     monitor_url: https://www.inpit.go.jp/shien/topic/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: 'a[href^="/shien/topic/"]:not([href$="index.html"])'
 
@@ -667,7 +612,6 @@ sources:
     monitor_url: https://www.inpit.go.jp/katsuyo/topic/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: 'a[href^="/katsuyo/topic/"]:not([href$="index.html"])'
 
@@ -677,7 +621,6 @@ sources:
     monitor_url: https://www.inpit.go.jp/jinzai/topic/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: 'a[href^="/jinzai/topic/info_"]'
 
@@ -687,7 +630,6 @@ sources:
     monitor_url: https://www.jetro.go.jp/biznewstop/ip/biznews/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: 'a[href^="/biznews/20"][href$=".html"]'
 
@@ -697,7 +639,6 @@ sources:
     monitor_url: https://www.courts.go.jp/ip/index.html
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: 'div.block-latest-news a[href]:not([href$="topics/index.html"])'
 
@@ -707,7 +648,6 @@ sources:
     monitor_url: https://www.nikkei.com/search?keyword=%E7%9F%A5%E7%9A%84%E8%B2%A1%E7%94%A3
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: '.search__result-item-content'
@@ -720,7 +660,6 @@ sources:
     monitor_url: https://www.nikkei.com/search?keyword=%E7%89%B9%E8%A8%B1
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: '.search__result-item-content'
@@ -733,7 +672,6 @@ sources:
     monitor_url: https://www.nikkei.com/search?keyword=%E5%95%86%E6%A8%99
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: '.search__result-item-content'
@@ -746,7 +684,6 @@ sources:
     monitor_url: https://www.nikkei.com/search?keyword=%E8%91%97%E4%BD%9C%E6%A8%A9
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: '.search__result-item-content'
@@ -759,7 +696,6 @@ sources:
     monitor_url: https://www.yomiuri.co.jp/web-search/?st=1&wo=%E7%9F%A5%E7%9A%84%E8%B2%A1%E7%94%A3&ac=srch
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: 'article'
@@ -772,7 +708,6 @@ sources:
     monitor_url: https://www.yomiuri.co.jp/web-search/?st=1&wo=%E7%89%B9%E8%A8%B1&ac=srch
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: 'article'
@@ -785,7 +720,6 @@ sources:
     monitor_url: https://www.yomiuri.co.jp/web-search/?st=1&wo=%E5%95%86%E6%A8%99&ac=srch
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: 'article'
@@ -798,7 +732,6 @@ sources:
     monitor_url: https://www.yomiuri.co.jp/web-search/?st=1&wo=%E8%91%97%E4%BD%9C%E6%A8%A9&ac=srch
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: 'article'
@@ -811,7 +744,6 @@ sources:
     monitor_url: https://www.patentsalon.com/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: 'td.main > ul > li > a[href]:has(b)'
 
@@ -821,7 +753,6 @@ sources:
     monitor_url: https://www.patentresult.co.jp/atom.xml
     mode: rss
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: ''
 
@@ -836,7 +767,6 @@ sources:
     monitor_url: https://www.epo.org/en/news-events/news/feed
     mode: rss
     enabled: true
-    max_items: 5
     priority: 1
 
   - name: EUIPO
@@ -846,7 +776,6 @@ sources:
     monitor_url: "https://zyn8p9ocp2-3.algolianet.com/1/indexes/ews-en-news/query?x-algolia-agent=Algolia%20for%20JavaScript%20(5.48.1)%3B%20Search%20(5.48.1)%3B%20Browser&x-algolia-api-key=428a6eab6ad825546f741c199084e245&x-algolia-application-id=ZYN8P9OCP2"
     mode: algolia   # <--- 새로운 모드
     enabled: true
-    max_items: 5
     priority: 1
 
   - name: 영국 지식재산청(IPO)
@@ -855,7 +784,6 @@ sources:
     monitor_url: https://www.gov.uk/search/news-and-communications.atom?organisations%5B%5D=intellectual-property-office
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: 유럽연합 집행위원회(뉴스)
@@ -864,7 +792,6 @@ sources:
     monitor_url: https://commission.europa.eu/node/33506/rss_en
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: 통합특허법원(UPC)
@@ -873,7 +800,6 @@ sources:
     monitor_url: https://www.unifiedpatentcourt.org/en/news
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: 'h3.tile__title a[href^="/en/news/"]'
 
@@ -883,7 +809,6 @@ sources:
     monitor_url: "https://zyn8p9ocp2-3.algolianet.com/1/indexes/euipn-en-news/query?x-algolia-api-key=65c666ae65d13e726b984aa39b6e6347&x-algolia-application-id=ZYN8P9OCP2"
     mode: algolia
     enabled: true
-    max_items: 5
     priority: 2
 
 
@@ -897,7 +822,6 @@ sources:
     monitor_url: https://www.wipo.int/pressroom/en/rss.xml
     mode: rss
     enabled: true
-    max_items: 5
     priority: 5
 
   - name: WIPO IP·경제
@@ -906,7 +830,6 @@ sources:
     monitor_url: https://www.wipo.int/en/web/economics/news/-/journal/rss/743893/7224673
     mode: rss
     enabled: true
-    max_items: 5
     priority: 4
 
   - name: WIPO 사무총장
@@ -915,7 +838,6 @@ sources:
     monitor_url: https://www.wipo.int/en/web/director-general/news/-/journal/rss/5085648/7224650
     mode: rss
     enabled: true
-    max_items: 5
     priority: 4
 
   - name: WIPO PCT
@@ -924,7 +846,6 @@ sources:
     monitor_url: https://www.wipo.int/en/web/pct-system/news/-/journal/rss/1254224/7225547
     mode: rss
     enabled: true
-    max_items: 5
     priority: 3
 
   - name: WIPO Lex
@@ -933,7 +854,6 @@ sources:
     monitor_url: https://www.wipo.int/en/web/wipolex/news/-/journal/rss/497678/7224680
     mode: rss
     enabled: true
-    max_items: 5
     priority: 3
 
   - name: WIPO 회의·세미나
@@ -942,7 +862,6 @@ sources:
     monitor_url: https://www.wipo.int/rss/index.xml?col=meetings
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: WIPO 도메인이름결정
@@ -951,7 +870,6 @@ sources:
     monitor_url: https://www.wipo.int/amc/en/rss.xml
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: WIPO IP Advantage
@@ -960,7 +878,6 @@ sources:
     monitor_url: https://www.wipo.int/en/web/ip-advantage/search/-/journal/rss/1576608/7225161
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: WIPO 헤이그시스템
@@ -969,7 +886,6 @@ sources:
     monitor_url: https://www.wipo.int/en/web/hague-system/news/-/journal/rss/355028/7224260
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: WIPO 리스본시스템
@@ -978,7 +894,6 @@ sources:
     monitor_url: https://www.wipo.int/en/web/lisbon-system/news/-/journal/rss/500030/7224267
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: WIPO 마드리드시스템
@@ -987,7 +902,6 @@ sources:
     monitor_url: https://www.wipo.int/en/web/madrid-system/news/-/journal/rss/497990/7224271
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: WIPO PATENTSCOPE
@@ -996,7 +910,6 @@ sources:
     monitor_url: https://www.wipo.int/en/web/patentscope/news/-/journal/rss/1418243/7995949
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: WIPO 출판물
@@ -1005,7 +918,6 @@ sources:
     monitor_url: https://www.wipo.int/rss/publications.xml
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: WIPO 일본사무소
@@ -1014,7 +926,6 @@ sources:
     monitor_url: https://www.wipo.int/en/web/office-japan/news/-/journal/rss/1255779/7224687
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: ID5 뉴스
@@ -1023,7 +934,6 @@ sources:
     monitor_url: https://id-five.org/about/id5-news/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: 'div.list-board tbody tr[id^="list-item-"]'
     title_selector: 'td.title a[href]'
@@ -1036,7 +946,6 @@ sources:
     monitor_url: https://tmfive.org/news-and-events/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: 'div.list-board tbody tr[id^="list-item-"]'
     title_selector: 'td.title a[href]'
@@ -1049,7 +958,6 @@ sources:
     monitor_url: "https://api.oecd.org/webcms/search/faceted-search?path=%2Fcontent%2Foecd%2Fen%2Fabout%2Fnews&orderBy=dateDesc&page=0&siteName=oecd&pageSize=5&deselected=oecd-languages%3Aen"
     mode: oecd_search_api
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: 국제상표협회(INTA) 보도자료
@@ -1058,7 +966,6 @@ sources:
     monitor_url: "https://79T4HZ98YE-dsn.algolia.net/1/indexes/prod_news/query?x-algolia-api-key=NWI5ZTQwNTk0NzEwZjA4MTYwOTY1NDQ4M2M4NmZiOWRiN2JjZTBlY2YyYTRiNGQ0NTY2YjhlNjQwMmNhODYwZHZhbGlkVW50aWw9MTc3OTk1NTcyNA==&x-algolia-application-id=79T4HZ98YE"
     mode: algolia
     enabled: true
-    max_items: 5
     priority: 2
     algolia_filters: 'content_type:"Press Releases"'
 
@@ -1068,7 +975,6 @@ sources:
     monitor_url: https://www.wto.org/library/rss/latest_news_e.xml
     mode: rss
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: APEC 뉴스룸
@@ -1077,7 +983,6 @@ sources:
     monitor_url: "https://www.apec.org/apecapi/article/getarticleswithfilters?listingType=749e45d0-485d-4283-883a-e94445934bf9%7C9c4616f2-d623-42a1-8755-e01269234bb1%7Ce270d054-e65c-4dd6-9b81-7a807e9862d8%7C1f82ea4b-ec75-4581-a7b5-d53dd7ef3592%7C99f65abc-265b-4b1f-a296-b10a93d76f64%7C0052e8e7-9448-4751-8c7b-978a8237fa35&year=&keyword=&page=1"
     mode: json_api
     enabled: true
-    max_items: 5
     priority: 2
 
   - name: UNIDO 뉴스
@@ -1086,7 +991,6 @@ sources:
     monitor_url: https://www.unido.org/news
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     row_selector: ".view-news .views-row"
     title_selector: "p.h4.d-none.d-md-block a[href]"
@@ -1102,7 +1006,6 @@ sources:
     monitor_url: https://www.ipvietnam.gov.vn/en_US/web/english/announcement
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: 'a[href*="/announcement/-/asset_publisher/"][href*="/content/"]'
 
@@ -1112,7 +1015,6 @@ sources:
     monitor_url: https://www.ipvietnam.gov.vn/en_US/web/english/annual-report
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 3
     list_selector: 'a[href*="/annual-report/-/asset_publisher/"][href*="/content/"]'
 
@@ -1122,7 +1024,6 @@ sources:
     monitor_url: https://www.ipvietnam.gov.vn/en_US/web/english/domestic-ip-activities
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: 'a[href*="/domestic-ip-activities/-/asset_publisher/"][href*="/content/"]'
 
@@ -1132,7 +1033,6 @@ sources:
     monitor_url: https://www.ipvietnam.gov.vn/en_US/web/english/world-ip-activities
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: 'a[href*="/world-ip-activities/-/asset_publisher/"][href*="/content/"]'
 
@@ -1142,7 +1042,6 @@ sources:
     monitor_url: https://www.myipo.gov.my/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: '.bde-tabs__panel-content .su-post a[href]'
 
@@ -1152,7 +1051,6 @@ sources:
     monitor_url: https://www.myipo.gov.my/ms/media/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: 'a[href*="Kenyataan-Media"][href$=".pdf"]'
 
@@ -1162,7 +1060,6 @@ sources:
     monitor_url: https://www.ipos.gov.sg/news/news-collection/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: a[href]
     row_selector: 'a[href^="/news/news-collection/"]'
@@ -1175,7 +1072,6 @@ sources:
     monitor_url: https://www.ipos.gov.sg/global-ip-hub/research-and-studies/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: a[href]
     row_selector: 'main a[href^="/global-ip-hub/research-and-studies/"]'
@@ -1187,7 +1083,6 @@ sources:
     monitor_url: https://www.ipos.gov.sg/global-ip-hub/research-and-studies/publications/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: a[href]
     row_selector: 'a[href$=".pdf"], a[href*="isomer-user-content.by.gov.sg"]'
@@ -1200,7 +1095,6 @@ sources:
     monitor_url: https://www.dgip.go.id/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: 'a[href*="/artikel/detail-artikel-berita/"][href*="kategori=liputan-humas"], a[href*="/artikel/detail-artikel-berita/"][href*="kategori=agenda-ki"]'
@@ -1213,7 +1107,6 @@ sources:
     monitor_url: https://www.ipaustralia.gov.au/news-and-community/news
     mode: sxa_search
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: a[href]
     title_selector: '.card-title'
@@ -1224,7 +1117,6 @@ sources:
     monitor_url: https://www.ipaustralia.gov.au/news-and-community/case-studies
     mode: sxa_search
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: a[href]
     title_selector: '.card-title'
@@ -1235,7 +1127,6 @@ sources:
     monitor_url: https://www.ipaustralia.gov.au/news-and-community/official-notices
     mode: sxa_search
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: a[href]
     title_selector: '.card-title'
@@ -1246,7 +1137,6 @@ sources:
     monitor_url: https://www.ipaustralia.gov.au/news-and-community/webinars-and-podcasts
     mode: sxa_search
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: a[href]
     title_selector: '.card-title'
@@ -1257,7 +1147,6 @@ sources:
     monitor_url: https://www.ipaustralia.gov.au/news-and-community/events
     mode: sxa_search
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: a[href]
     title_selector: '.card-title'
@@ -1268,7 +1157,6 @@ sources:
     monitor_url: https://ised-isde.canada.ca/site/canadian-intellectual-property-office/en/notices-and-updates
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: 'table.nws-tbl tbody tr'
@@ -1281,7 +1169,6 @@ sources:
     monitor_url: https://ised-isde.canada.ca/site/canadian-intellectual-property-office/en/publications
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: '.wb-filter li > a[href]:not([href$=".pdf"]):not([href*="/attachments/"])'
 
@@ -1291,7 +1178,6 @@ sources:
     monitor_url: https://www.ipophil.gov.ph/updates/news/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: a[href]
     row_selector: '.wpnaw-blog-class'
@@ -1303,7 +1189,6 @@ sources:
     monitor_url: https://www.ipophil.gov.ph/updates/announcements/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: a[href]
     row_selector: '.wpnaw-blog-class'
@@ -1315,7 +1200,6 @@ sources:
     monitor_url: https://www.ipophil.gov.ph/updates/press-releases/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 2
     list_selector: a[href]
     row_selector: '.wpnaw-blog-class'
@@ -1327,7 +1211,6 @@ sources:
     monitor_url: https://www.aripo.org/news/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: '.entry'
@@ -1340,7 +1223,6 @@ sources:
     monitor_url: https://oapi.int/en/media/news/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: '.grid-item'
@@ -1353,7 +1235,6 @@ sources:
     monitor_url: https://asiaiplaw.com/
     mode: html_list
     enabled: true
-    max_items: 5
     priority: 1
     list_selector: a[href]
     row_selector: 'a[href^="https://asiaiplaw.com/article/"], a[href^="https://asiaiplaw.com/section/cover-story/"], a[href^="https://asiaiplaw.com/section/in-depth/"], a[href^="https://asiaiplaw.com/section/news-analysis/"], a[href^="https://asiaiplaw.com/section/the-verdict/"], a[href^="https://asiaiplaw.com/section/people-places/"]'

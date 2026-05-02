@@ -2,7 +2,17 @@
 
 ## Digest 품질 개선 1~6
 
-- 현재 열린 항목 없음. 완료 항목은 `완료된 작업` 섹션으로 이동.
+- [x] DG1. 같은 이슈 중복 클러스터링 강화
+  - 2026-05-02 digest 기준 Samsung-ZTE FRAND 판결이 Patently-O, MLex, IAM 3건으로 중복 노출
+  - Claude `topic_key`가 흔들려도 핵심 엔티티 기반으로 같은 이슈를 묶는 보정 필요
+- [x] DG2. 같은 이슈 내 대표기사 선택 개선
+  - 원문/직접보도 우선, 해설성 글은 관련 기사로 표시
+- [x] DG3. top 5를 기사 5개가 아니라 이슈 5개로 보장
+  - 같은 이슈가 여러 기사로 top 5를 차지하지 않도록 점검
+- [x] DG4. digest 제목에 발송일 추가
+  - 예: `IP 동향 Digest - 2026-05-02 상위 5건`
+- [x] DG5. digest 메시지 수를 run log에 기록
+  - review는 메시지 수가 기록되지만 digest는 `digest_telegram_messages`가 비어 있음
 
 ## Review Telegram 품질 개선
 
@@ -73,9 +83,9 @@
     - 한 소스 묶음이 메시지 중간에서 끊기지 않도록 개선
     - 너무 긴 소스는 별도 메시지로 나누되 소스 헤더를 반복
   - R4. review 첫 메시지를 요약 리포트화
-    - 신규 기사 수, 성공/빈/실패 소스 수, `max_items_reached`, 날짜 누락, 제목 깨짐 의심 수 표시
+    - 신규 기사 수, fetch 후보 수, seen 제외 수, 성공/빈/실패 소스 수, 날짜 누락, 제목 깨짐 의심 수 표시
   - R6. 확인 필요 섹션 추가
-    - 수집 실패/빈 소스, `max_items_reached`, 날짜 누락, 제목 깨짐 의심, 후보 과다 소스 표시
+    - 수집 실패/빈 소스, 날짜 누락, 제목 깨짐 의심, 후보 과다 소스 표시
   - R7. 날짜 표시 정규화
     - 가능한 경우 `YYYY-MM-DD` 또는 `YYYY-MM-DD HH:MM`으로 표시
     - 요미우리처럼 시간만 표시되는 경우 URL 날짜와 결합
@@ -84,8 +94,9 @@
     - `&nbsp;` 등 HTML entity 제거
     - 과도한 공백 정리
 
-- GitHub Actions에서 매일 KST 09:00 자동 실행되도록 설정
-- 전체 소스 `max_items`를 5로 변경
+- GitHub Actions에서 매일 KST 08:37 자동 실행되도록 설정
+  - 09시 전후 도착을 목표로 정각 GitHub Actions 지연을 피하기 위해 23:37 UTC로 조정
+- 전체 소스 `max_items` 설정 제거 및 수집 제한 비활성화
 - Supabase 기반 `seen_urls` 저장/로드 적용
 - Supabase URL이 `/rest/v1` 포함 여부와 관계없이 동작하도록 정규화
 - 수집 검증용 Telegram 채널과 digest Telegram 채널 분리
@@ -106,10 +117,9 @@
   - `telegram_raw_review.txt`
   - `failed_sources.yaml`
   - `run_logs/*.json`
-- `max_items` 도달 여부를 수집 로그에 기록
-  - `max_items`
-  - `max_items_reached`
-  - 콘솔 메시지: `max_items 도달: N/N개 수집`
+- `max_items` 기반 수집 제한 비활성화
+  - config의 `max_items` 항목 제거
+  - monitor.py의 max_items 제한 helper는 no-op으로 비활성화
 - 일본 지식재산전략본부 등 일부 사이트의 인코딩/날짜 추출 개선
 - 베트남/IPRdaily 등 상세 페이지 기반 날짜 보강
 
@@ -122,21 +132,21 @@
   - `Supabase seen_urls 저장`
   - `Supabase analysis_results 저장`
   - 날짜별 `analysis_results_YYYYMMDD` 저장
-- 다음날 KST 09:00 자동 실행 여부 확인
+- 다음날 KST 08:37 예약 실행 및 09시 전후 Telegram 도착 여부 확인
 - `data/run_logs/run_*.json`에서 소스별 실패/빈 결과 확인
-- `source_check_report.json`에서 `max_items_reached: true`인 소스 확인
-- `max_items_reached`가 자주 발생하는 소스는 `max_items` 상향 검토
 - Telegram digest가 여러 메시지로 정상 분할되는지 확인
 - Claude 분석 실패 항목이 있는 경우 `analysis_errors` 확인
 
 ## 가까운 개선 과제
 
 - Review Telegram 개선 후보
-  - [ ] RV1. `max_items` 도달 표시의 노이즈 여부 검토
+  - [x] RV1. `max_items` 도달 표시의 노이즈 여부 검토
     - 2026-05-02 review 기준 `max_items 도달 소스: 104개`
     - 현재 모든 소스 `max_items=5` 운영이라 정상 소스도 대부분 확인 필요로 표시됨
     - 후보안: `확인 필요`에서는 제외하고 `참고` 수준으로 낮춰 표시
-  - [ ] RV2. review 요약 카운트 표현 정리 검토
+    - 반영: seen 제외 후 신규 기사가 `max_items`에 도달한 경우만 표시
+    - 추가 반영: `max_items` 제한 자체를 비활성화하고 review 표시에서 제거
+  - [x] RV2. review 요약 카운트 표현 정리 검토
     - 현재 상세 목록의 `총 수집 후보`는 실제로 신규 기사 수에 가까움
     - 후보안: `신규 기사`, `전체 fetch 후보`, `seen 제외`, `비기사 제외`를 분리 표시
   - [ ] RV3. empty 소스에 소요시간 표시 검토
@@ -149,7 +159,7 @@
     - 2026-05-02 review 기준 Thomson Reuters - Patent `Redefining legal value` 1건 날짜 누락
     - white paper/상시 자료처럼 날짜가 없을 수 있는 항목은 치명 오류와 분리할지 검토
 - 수집 후보 전체 개수(`candidate_count`)를 가능한 소스부터 로그에 추가
-  - 현재는 `count == max_items`이면 제한 도달 가능성만 판단
+  - `max_items` 제한을 제거했으므로, 가능한 소스는 전체 후보 수를 직접 기록
   - 후보 전체 수를 알 수 있는 HTML/RSS 소스부터 보강
 - 날짜 누락 소스 추가 개선
   - `published`가 비어 있는 소스 목록을 주기적으로 확인
@@ -169,6 +179,11 @@
 ## 승인형 운영 전환 아이디어
 
 - 자동 Telegram 발송 대신 사람 승인 후 발송하는 구조 검토
+- 같은 이슈 묶음은 자동 추천 후 사람이 최종 확인
+  - Claude `topic_key`/엔티티 기반 클러스터링은 후보 추천으로만 사용
+  - 승인 화면에서 각 기사별 `같은 이슈로 묶기 / 별도 이슈로 분리 / 다른 이슈에 병합` 선택
+  - 사람이 확정한 묶음 기준으로 digest top 5 이슈와 관련 기사 목록 생성
+  - 확정된 묶음 결과는 이후 프롬프트/규칙 개선용 피드백 데이터로 저장
 - 1차 추천 방식: Notion 검토 DB
   - Claude 분석 결과를 Notion DB에 초안으로 등록
   - 사람이 요약/점수/최종 발송문을 수정
@@ -182,6 +197,10 @@
   - Claude 요약
   - Claude 중요도
   - Claude 시사점
+  - 자동 추천 이슈키
+  - 확정 이슈키
+  - 묶음 결정: 자동추천 / 같은이슈 / 별도이슈 / 병합
+  - 묶음 검토 메모
   - 최종 발송 제목
   - 최종 발송 본문
   - 승인상태: 대기 / 승인 / 보류 / 제외

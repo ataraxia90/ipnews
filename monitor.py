@@ -29,7 +29,6 @@ class SourceConfig:
     monitor_url: str
     mode: str
     enabled: bool
-    max_items: int
     priority: int
     list_selector: str = ""
     row_selector: str = ""
@@ -87,6 +86,9 @@ SUPABASE_RESULTS_KEY = 'analysis_results'
 SUPABASE_SENT_DIGEST_TOPICS_KEY = 'sent_digest_topics'
 SUPABASE_RUN_LOG_PREFIX = 'run_log'
 SUPABASE_LATEST_RUN_LOG_KEY = 'run_log_latest'
+
+# max_items 기반 수집 제한은 seen 적용 전 후보 수를 자르는 방식이라 운영상
+# 의미가 약해졌다. 설정에서는 제거하고 제한 helper도 no-op으로 둔다.
 
 
 
@@ -451,28 +453,21 @@ def load_config(path: str = 'config.yaml') -> Dict[str, Any]:
         return yaml.safe_load(f)
 
 
-def get_cli_int(flag: str) -> Optional[int]:
-    if flag not in sys.argv:
-        return None
-    idx = sys.argv.index(flag)
-    if idx + 1 >= len(sys.argv):
-        print(f"{flag} 값이 없어 무시합니다.")
-        return None
-    try:
-        return int(sys.argv[idx + 1])
-    except ValueError:
-        print(f"{flag} 값이 정수가 아니어서 무시합니다: {sys.argv[idx + 1]}")
-        return None
+def source_limit_reached(items: List[Any], source: SourceConfig) -> bool:
+    # max_items 제한 로직은 운영상 비활성화했다.
+    return False
 
 
-def load_sources(cfg: Dict[str, Any], max_items_override: Optional[int] = None) -> List[SourceConfig]:
+def source_limited_sequence(items: List[Any], source: SourceConfig) -> List[Any]:
+    # max_items 제한 로직은 운영상 비활성화했다.
+    return items
+
+
+def load_sources(cfg: Dict[str, Any]) -> List[SourceConfig]:
     out = []
     for s in cfg.get('sources', []):
         if not s.get('enabled', True):
             continue
-        max_items = s.get('max_items', 5)
-        if max_items_override is not None:
-            max_items = max_items_override
         out.append(SourceConfig(
             name=s['name'],
             region=s.get('region', ''),
@@ -480,7 +475,6 @@ def load_sources(cfg: Dict[str, Any], max_items_override: Optional[int] = None) 
             monitor_url=s['monitor_url'],
             mode=s.get('mode', 'html_list'),
             enabled=s.get('enabled', True),
-            max_items=max_items,
             priority=s.get('priority', 3),
             list_selector=s.get('list_selector', ''),
             row_selector=s.get('row_selector', ''),
@@ -732,8 +726,6 @@ def build_source_check_record(
         "monitor_url": src.monitor_url,
         "status": status,
         "count": len(articles),
-        "max_items": src.max_items,
-        "max_items_reached": len(articles) >= src.max_items if src.max_items else False,
         "error": error,
         "sample_titles": [a.title for a in articles[:3]],
         "sample_urls": [a.url for a in articles[:3]],
@@ -1087,7 +1079,7 @@ def fetch_playwright(source: SourceConfig, timeout: int = 30000) -> List[Article
                 summary_raw='',
                 published=published,
             ))
-            if len(items) >= source.max_items:
+            if source_limit_reached(items, source):
                 break
 
         if items:
@@ -1161,7 +1153,7 @@ def fetch_playwright(source: SourceConfig, timeout: int = 30000) -> List[Article
         seen_url.add(url)
         items.append(
             Article(source=source.name, region=source.region, title=title, url=url, summary_raw='', published=None))
-        if len(items) >= source.max_items:
+        if source_limit_reached(items, source):
             break
 
     return items
@@ -1170,7 +1162,7 @@ def fetch_playwright(source: SourceConfig, timeout: int = 30000) -> List[Article
 def fetch_rss(source: SourceConfig, timeout: int = 20) -> List[Article]:
     d = feedparser.parse(source.monitor_url)
     articles = []
-    for entry in d.entries[: source.max_items]:
+    for entry in source_limited_sequence(list(d.entries), source):
         title = getattr(entry, 'title', '').strip()
         link = getattr(entry, 'link', '').strip()
         summary = getattr(entry, 'summary', '') or getattr(entry, 'description', '')
@@ -1454,7 +1446,7 @@ def fetch_html_list(source: SourceConfig, timeout: int = 20) -> List[Article]:
 
             items.append((title, full_url, published))
 
-            if len(items) >= source.max_items:
+            if source_limit_reached(items, source):
                 break
 
         articles = []
@@ -1559,7 +1551,7 @@ def fetch_html_list(source: SourceConfig, timeout: int = 20) -> List[Article]:
         seen_url.add(url)
 
         items.append((title, url, published))
-        if len(items) >= source.max_items:
+        if source_limit_reached(items, source):
             break
 
     articles = []
@@ -1590,11 +1582,11 @@ def fetch_algolia_api(source: SourceConfig, timeout: int = 20) -> List[Article]:
     }
 
     # Algolia에 보낼 검색 조건 (cURL의 data-raw를 파이썬 딕셔너리로 변환)
-    # hitsPerPage를 max_items와 연결하여 딱 필요한 개수만 가져옵니다.
+    # max_items 제한은 비활성화했으므로 넉넉한 기본 페이지 크기로 가져옵니다.
     payload = {
         "query": "",
         "page": 0,
-        "hitsPerPage": source.max_items,
+        "hitsPerPage": 50,
         "facets": ["*"]
     }
     if source.algolia_filters:
@@ -1681,8 +1673,8 @@ def fetch_json_api(source: SourceConfig, timeout: int = 20) -> List[Article]:
 
     articles = []
 
-    # max_items 개수만큼만 처리
-    for item in data[:source.max_items]:
+    # max_items 제한은 비활성화했습니다.
+    for item in source_limited_sequence(data, source):
         title = item.get('title', '').strip()
         raw_url = item.get('url', '').strip()
 
@@ -1732,7 +1724,7 @@ def fetch_oecd_search_api(source: SourceConfig, timeout: int = 20) -> List[Artic
     results = data.get('results', [])
     articles = []
 
-    for item in results[:source.max_items]:
+    for item in source_limited_sequence(results, source):
         title = str(item.get('title') or '').strip()
         raw_url = str(item.get('url') or '').strip()
 
@@ -1788,7 +1780,7 @@ def fetch_sxa_search_api(source: SourceConfig, timeout: int = 20) -> List[Articl
             'v': props.get('v', ''),
             's': props.get('s', ''),
             'itemid': props.get('itemid', ''),
-            'p': max(int(props.get('p') or 0), source.max_items),
+            'p': int(props.get('p') or 50) or 50,
         }
         if props.get('sig'):
             params['sig'] = props.get('sig')
@@ -1815,7 +1807,7 @@ def fetch_sxa_search_api(source: SourceConfig, timeout: int = 20) -> List[Articl
 
     articles = []
     seen_url = set()
-    for item in data.get('Results', [])[:source.max_items]:
+    for item in source_limited_sequence(data.get('Results', []), source):
         card = BeautifulSoup(item.get('Html') or '', 'html.parser')
         title_el = card.select_one(source.title_selector or '.card-title')
         link_el = card.select_one(source.list_selector or 'a[href]')
@@ -1872,7 +1864,7 @@ def fetch_people_search_api(source: SourceConfig, timeout: int = 20) -> List[Art
     payload = {
         'key': keyword,
         'page': 1,
-        'limit': max(source.max_items, 10),
+        'limit': 50,
         'hasTitle': True,
         'hasContent': True,
         'isFuzzy': True,
@@ -1942,7 +1934,7 @@ def fetch_people_search_api(source: SourceConfig, timeout: int = 20) -> List[Art
             published=published,
         ))
 
-        if len(articles) >= source.max_items:
+        if source_limit_reached(articles, source):
             break
 
     print(f"[DEBUG] {source.name} People.cn 검색 API에서 {len(articles)}개 기사 파싱 성공")
@@ -2104,7 +2096,7 @@ OFFICIAL_SOURCE_KEYWORDS = [
 ]
 
 MEDIA_SOURCE_KEYWORDS = [
-    "mlex", "iam", "ip watchdog", "patent salon", "patent result",
+    "mlex", "iam", "ip watchdog", "patently-o", "patentlyo", "patent salon", "patent result",
     "ipr daily", "iprdaily", "asia ip law", "thomson reuters",
     "bloomberg", "nikkei", "요미우리", "닛케이", "reuters",
 ]
@@ -2113,6 +2105,24 @@ OFFICIAL_DOMAIN_HINTS = [
     ".gov", ".go.", ".gouv", ".gc.ca", ".gov.uk", ".europa.eu",
     "wipo.int", "wto.org", "oecd.org", "epo.org", "euipo.europa.eu",
     "unifiedpatentcourt.org", "courts.go.jp", "jpo.go.jp",
+]
+
+DIGEST_DIRECT_REPORT_PATTERNS = [
+    r"\brules?\b", r"\bruled\b", r"\bjudg(e)?ment\b", r"\bdecision\b",
+    r"\border(s|ed)?\b", r"\bfinding(s)?\b", r"\bfinds?\b",
+    r"\breleases?\b", r"\bannounces?\b", r"\bissues?\b", r"\bpublishes?\b",
+    r"\badopts?\b", r"\bapproves?\b", r"\bpasses?\b", r"\bfiles?\b",
+    r"\bsettles?\b", r"\blaunches?\b", r"\bopens?\b", r"\bconsultation\b",
+    r"\bfinal rule\b", r"\bhigh court\b", r"\bcourt\b",
+    r"판결", r"결정", r"명령", r"발표", r"공개", r"공표", r"고시", r"시행",
+    r"제정", r"개정", r"승인", r"출원", r"제소", r"합의", r"개시",
+]
+
+DIGEST_COMMENTARY_PATTERNS = [
+    r"\bframework\b", r"\bimplication(s)?\b", r"\banalysis\b",
+    r"\bcommentary\b", r"\bopinion\b", r"\bexplainer\b", r"\broundup\b",
+    r"\bwhat\b.*\bmeans\b", r"\bbarks?\s*&\s*bites?\b", r"\bnote on\b",
+    r"시사점", r"해설", r"논평", r"칼럼", r"정리", r"브리핑",
 ]
 
 
@@ -2139,11 +2149,46 @@ def digest_source_authority_score(item: AnalyzedArticle) -> int:
     return 2
 
 
+def digest_direct_report_score(item: AnalyzedArticle) -> int:
+    title = normalize_topic_text(item.title or "")
+    source = normalize_topic_text(item.source or "")
+    raw_excerpt = normalize_topic_text(item.raw_excerpt or "")
+    url = (item.url or "").lower()
+    domain = urlparse(url).netloc.lower()
+    text = " ".join([title, source, raw_excerpt])
+    score = 0
+
+    if any(domain_hint in domain for domain_hint in OFFICIAL_DOMAIN_HINTS):
+        score += 4
+    if any(keyword in source for keyword in OFFICIAL_SOURCE_KEYWORDS):
+        score += 4
+
+    for pattern in DIGEST_DIRECT_REPORT_PATTERNS:
+        if re.search(pattern, text):
+            score += 2
+            break
+
+    if re.search(r"\b(original|exclusive|breaking)\b", text):
+        score += 1
+    if re.search(r"\b(feed|rss|blog)\b", url):
+        score -= 1
+    if "patentlyo" in domain or "patently-o" in source:
+        score -= 1
+
+    for pattern in DIGEST_COMMENTARY_PATTERNS:
+        if re.search(pattern, text):
+            score -= 2
+            break
+
+    return score
+
+
 def choose_digest_representative(items: List[AnalyzedArticle]) -> AnalyzedArticle:
     return max(
         items,
         key=lambda item: (
             digest_source_authority_score(item),
+            digest_direct_report_score(item),
             item.importance_score,
             len(item.summary_ko or ""),
         )
@@ -2172,6 +2217,17 @@ def extract_digest_topic_keys(item: AnalyzedArticle) -> set:
     topic_key = normalize_topic_key(getattr(item, "topic_key", ""))
     if topic_key:
         keys.add(f"topic:{topic_key}")
+
+    if "samsung" in text and "zte" in text and "frand" in text:
+        keys.add("entity:samsung-zte-frand")
+    if "392 million" in text and "frand" in text and ("zte" in text or "samsung" in text):
+        keys.add("entity:samsung-zte-frand")
+    if "frand" in text and "meade" in text and ("zte" in text or "samsung" in text):
+        keys.add("entity:samsung-zte-frand")
+    if "frand" in text and ("english high court" in text or "uk patent judgment" in text) and (
+        "zte" in text or "samsung" in text
+    ):
+        keys.add("entity:samsung-zte-frand")
 
     if (
         "special 301" in text
@@ -2211,8 +2267,8 @@ def same_digest_topic(
     tokens: set,
     cluster: DigestTopicCluster
 ) -> bool:
-    if keys and cluster.topic_keys and keys.intersection(cluster.topic_keys):
-        return True
+    if keys and cluster.topic_keys:
+        return bool(keys.intersection(cluster.topic_keys))
 
     if not tokens or not cluster.representative_tokens:
         return False
@@ -2250,6 +2306,16 @@ def cluster_digest_topics(items: List[AnalyzedArticle]) -> List[DigestTopicClust
 
     for cluster in clusters:
         cluster.representative = choose_digest_representative(cluster.items)
+        cluster.items.sort(
+            key=lambda item: (
+                item is cluster.representative,
+                digest_source_authority_score(item),
+                digest_direct_report_score(item),
+                item.importance_score,
+                len(item.summary_ko or ""),
+            ),
+            reverse=True,
+        )
 
     clusters.sort(
         key=lambda cluster: (
@@ -2305,6 +2371,14 @@ def parse_iso_date(value: str) -> Optional[datetime]:
 
 
 def digest_cluster_topic_key(cluster: DigestTopicCluster) -> str:
+    stable_keys = sorted(
+        str(key).replace("entity:", "", 1)
+        for key in cluster.topic_keys
+        if str(key).startswith("entity:")
+    )
+    if stable_keys:
+        return stable_keys[0]
+
     representative_key = normalize_topic_key(getattr(cluster.representative, "topic_key", ""))
     if representative_key:
         return representative_key
@@ -2373,6 +2447,7 @@ def select_digest_clusters(
     recent_topic_days: int = 3,
     run_date: Optional[str] = None,
 ) -> tuple:
+    """Select top digest topics, counting one clustered issue as one slot."""
     filtered = [x for x in analyzed if x.importance_score >= min_importance]
     topic_clusters = cluster_digest_topics(filtered)
     run_date = run_date or time.strftime("%Y-%m-%d")
@@ -2451,9 +2526,13 @@ def update_sent_digest_topics(
     return sorted(out, key=lambda x: str(x.get("last_sent_date", "")), reverse=True)
 
 
-def render_telegram_digest(selected_clusters: List[DigestTopicCluster]) -> str:
+def render_telegram_digest(
+    selected_clusters: List[DigestTopicCluster],
+    run_date: Optional[str] = None,
+) -> str:
     lines = []
-    lines.append(f"IP 동향 Digest - 상위 {len(selected_clusters)}건")
+    date_part = f"{run_date} " if run_date else ""
+    lines.append(f"IP 동향 Digest - {date_part}상위 {len(selected_clusters)}건")
     lines.append("")
 
     if not selected_clusters:
@@ -2491,14 +2570,15 @@ def render_telegram_digest(selected_clusters: List[DigestTopicCluster]) -> str:
 def build_telegram_digest(
     analyzed: List[AnalyzedArticle],
     top_n: int = 5,
-    min_importance: int = 0
+    min_importance: int = 0,
+    run_date: Optional[str] = None,
 ) -> str:
     selected_clusters, _ = select_digest_clusters(
         analyzed,
         top_n=top_n,
         min_importance=min_importance,
     )
-    return render_telegram_digest(selected_clusters)
+    return render_telegram_digest(selected_clusters, run_date=run_date)
 
 
 def save_digest(text: str):
@@ -2642,7 +2722,9 @@ def build_raw_review_summary_lines(
     ok_sources = sum(1 for r in source_check_records if r.get("status") == "ok")
     empty_sources = sum(1 for r in source_check_records if r.get("status") == "empty")
     failed_sources = sum(1 for r in source_check_records if r.get("status") == "fail")
-    max_item_sources = [r for r in source_check_records if r.get("max_items_reached")]
+    fetch_candidate_count = sum(int(r.get("count") or 0) for r in source_check_records)
+    seen_skipped_count = sum(int(r.get("seen_skipped_count") or 0) for r in source_check_records)
+    non_article_skipped_count = sum(int(r.get("non_article_skipped_count") or 0) for r in source_check_records)
     problem_sources = [
         r for r in source_check_records
         if r.get("status") in ("fail", "empty")
@@ -2661,8 +2743,8 @@ def build_raw_review_summary_lines(
         "요약 리포트",
         "",
         f"- 신규 기사: {len(articles)}개",
+        f"- 전체 fetch 후보: {fetch_candidate_count}개 / seen 제외 {seen_skipped_count}개 / 비기사 제외 {non_article_skipped_count}개",
         f"- 소스 상태: 성공 {ok_sources}개 / 빈값 {empty_sources}개 / 실패 {failed_sources}개 / 전체 {total_sources}개",
-        f"- max_items 도달 소스: {len(max_item_sources)}개",
         f"- 날짜 누락 기사: {len(missing_date_articles)}개",
         f"- 제목 잘림/깨짐 의심: {len(title_attention_articles)}개",
     ]
@@ -2670,8 +2752,6 @@ def build_raw_review_summary_lines(
     attention_lines = []
     if problem_sources:
         attention_lines.append(f"- 수집 실패/빈값 소스: {len(problem_sources)}개")
-    if max_item_sources:
-        attention_lines.append(f"- max_items 도달 소스: {len(max_item_sources)}개")
     if missing_date_articles:
         attention_lines.append(f"- 날짜 누락 기사: {len(missing_date_articles)}개")
     if title_attention_articles:
@@ -2695,16 +2775,6 @@ def build_raw_review_summary_lines(
             lines.append(f"- [{status}] {name}{suffix}")
         if len(problem_sources) > 10:
             lines.append(f"- 외 {len(problem_sources) - 10}개")
-
-    if max_item_sources:
-        lines.extend(["", "max_items 도달 소스"])
-        for record in max_item_sources[:10]:
-            name = record.get("name", "-")
-            count = record.get("count", 0)
-            max_items = record.get("max_items", "-")
-            lines.append(f"- {name}: {count}/{max_items}개")
-        if len(max_item_sources) > 10:
-            lines.append(f"- 외 {len(max_item_sources) - 10}개")
 
     if high_count_sources:
         lines.extend(["", "후보 과다 소스"])
@@ -2832,7 +2902,7 @@ def build_raw_review_messages(
     overview_lines = [
         f"IP Monitor 수집 검증 목록 - {generated_date}",
         "",
-        f"총 수집 후보: {len(articles)}개",
+        f"신규 기사: {len(articles)}개",
         f"수집 소스: {len(source_groups)}개",
         "",
         "국가/지역별 수집 개수",
@@ -2943,7 +3013,7 @@ def send_telegram_messages(
     cfg: Dict[str, Any],
     chat_id_env: str = 'TELEGRAM_CHAT_ID',
     enabled_key: str = 'send_enabled',
-):
+) -> int:
     messages = split_telegram_messages(text.splitlines(), max_chars=3500)
     send_telegram_message_chunks(
         messages,
@@ -2951,6 +3021,7 @@ def send_telegram_messages(
         chat_id_env=chat_id_env,
         enabled_key=enabled_key,
     )
+    return len(messages)
 
 
 def main():
@@ -2959,10 +3030,8 @@ def main():
     config_path = 'data/failed_sources.yaml' if '--failed-only' in sys.argv else 'config.yaml'
     failed_only = '--failed-only' in sys.argv
     skip_analysis = '--skip-analysis' in sys.argv
-    max_items_override = get_cli_int('--max-items-override')
-
     cfg = load_config(config_path)
-    sources = load_sources(cfg, max_items_override=max_items_override)
+    sources = load_sources(cfg)
 
     seen = load_seen()
     existing_results = load_results()
@@ -2991,7 +3060,6 @@ def main():
         "config_path": config_path,
         "failed_only": failed_only,
         "skip_analysis": SKIP_ANALYSIS,
-        "max_items_override": max_items_override,
         "no_telegram": '--no-telegram' in sys.argv,
         "github": {
             "event_name": os.getenv("GITHUB_EVENT_NAME", ""),
@@ -3049,6 +3117,7 @@ def main():
             "daily_results_saved": False,
             "daily_results_path": None,
             "digest_saved": False,
+            "digest_telegram_messages": 0,
             "telegram_send_enabled": cfg.get("telegram", {}).get("send_enabled", False),
             "telegram_review_send_enabled": cfg.get("telegram", {}).get("review_send_enabled", False),
             "telegram_digest_send_enabled": cfg.get("telegram", {}).get("digest_send_enabled", False),
@@ -3074,8 +3143,6 @@ def main():
             "mode": src.mode,
             "monitor_url": src.monitor_url,
             "status": None,
-            "max_items": src.max_items,
-            "max_items_reached": False,
             "fetched_count": 0,
             "new_count": 0,
             "seen_skipped_count": 0,
@@ -3091,7 +3158,6 @@ def main():
                 build_source_check_record(src, arts)
             )
             source_log["fetched_count"] = len(arts)
-            source_log["max_items_reached"] = len(arts) >= src.max_items if src.max_items else False
             source_log["status"] = "ok" if arts else "empty"
             source_log["sample_articles"] = [
                 {"title": a.title, "url": a.url, "published": a.published}
@@ -3128,9 +3194,15 @@ def main():
             seen.add(a.url)
 
         print(f'{progress_label} 신규 기사 후보: {len(fresh)}개')
-        if source_log["max_items_reached"]:
-            print(f'{progress_label} max_items 도달: {source_log["fetched_count"]}/{src.max_items}개 수집')
         source_log["new_count"] = len(fresh)
+        if source_check_records:
+            source_check_records[-1].update({
+                "fetched_count": source_log["fetched_count"],
+                "new_count": source_log["new_count"],
+                "seen_skipped_count": source_log["seen_skipped_count"],
+                "already_analyzed_skipped_count": source_log["already_analyzed_skipped_count"],
+                "non_article_skipped_count": source_log["non_article_skipped_count"],
+            })
         source_log["elapsed_seconds"] = round(time.time() - source_started, 3)
         run_log["sources"].append(source_log)
         new_articles.extend(fresh)
@@ -3288,16 +3360,17 @@ def main():
     run_log["summary"]["digest_recent_topic_skipped_count"] = len(recent_topic_skips)
     run_log["digest_recent_topic_skips"] = recent_topic_skips[:100]
 
-    digest_text = render_telegram_digest(selected_digest_clusters)
+    digest_text = render_telegram_digest(selected_digest_clusters, run_date=digest_run_date)
     save_digest(digest_text)
     run_log["summary"]["digest_saved"] = True
     digest_telegram_started = time.time()
-    send_telegram_messages(
+    digest_telegram_messages = send_telegram_messages(
         digest_text,
         cfg,
         chat_id_env='TELEGRAM_DIGEST_CHAT_ID',
         enabled_key='digest_send_enabled',
     )
+    run_log["summary"]["digest_telegram_messages"] = digest_telegram_messages
     run_log["summary"]["digest_telegram_duration_seconds"] = round(
         time.time() - digest_telegram_started,
         3
