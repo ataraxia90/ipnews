@@ -101,6 +101,7 @@ SUPABASE_STATE_TABLE = 'monitor_state'
 SUPABASE_SEEN_KEY = 'seen_urls'
 SUPABASE_RESULTS_KEY = 'analysis_results'
 SUPABASE_SENT_DIGEST_TOPICS_KEY = 'sent_digest_topics'
+SUPABASE_NOTION_PAGES_KEY = 'notion_pages'
 SUPABASE_RUN_LOG_PREFIX = 'run_log'
 SUPABASE_LATEST_RUN_LOG_KEY = 'run_log_latest'
 
@@ -2656,6 +2657,10 @@ def save_digest(text: str):
 
 
 def load_notion_pages() -> Dict[str, Any]:
+    remote = load_supabase_state(SUPABASE_NOTION_PAGES_KEY)
+    if isinstance(remote, dict):
+        return remote
+
     if not os.path.exists(NOTION_PAGES_PATH):
         return {}
     try:
@@ -2670,6 +2675,7 @@ def save_notion_pages(items: Dict[str, Any]) -> None:
     os.makedirs('data', exist_ok=True)
     with open(NOTION_PAGES_PATH, 'w', encoding='utf-8') as f:
         json.dump(items, f, ensure_ascii=False, indent=2)
+    save_supabase_state(SUPABASE_NOTION_PAGES_KEY, items)
 
 
 def notion_enabled(cfg: Dict[str, Any]) -> bool:
@@ -2702,7 +2708,12 @@ def normalize_notion_page_id(value: Optional[str]) -> str:
 def notion_request(method: str, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     url = f"https://api.notion.com/v1/{path.lstrip('/')}"
     for attempt in range(3):
-        resp = requests.request(method, url, headers=notion_headers(), json=payload, timeout=30)
+        kwargs = {"headers": notion_headers(), "timeout": 30}
+        if method.upper() == "GET":
+            kwargs["params"] = payload
+        else:
+            kwargs["json"] = payload
+        resp = requests.request(method, url, **kwargs)
         if resp.status_code == 429 and attempt < 2:
             retry_after = int(resp.headers.get("Retry-After") or "1")
             time.sleep(max(1, retry_after))
@@ -2735,6 +2746,45 @@ def notion_heading(text: Any, level: int = 2) -> Dict[str, Any]:
 
 def notion_divider() -> Dict[str, Any]:
     return {"object": "block", "type": "divider", "divider": {}}
+
+
+def notion_callout(text: Any) -> Dict[str, Any]:
+    return {"object": "block", "type": "callout", "callout": {"rich_text": notion_text(text)}}
+
+
+def notion_code(text: Any, language: str = "plain text") -> Dict[str, Any]:
+    return {
+        "object": "block",
+        "type": "code",
+        "code": {
+            "rich_text": notion_text(text, max_chars=1900),
+            "language": language,
+        },
+    }
+
+
+def notion_page_children(page_id: str) -> List[Dict[str, Any]]:
+    children: List[Dict[str, Any]] = []
+    cursor = None
+    while True:
+        params: Dict[str, Any] = {"page_size": 100}
+        if cursor:
+            params["start_cursor"] = cursor
+        data = notion_request("GET", f"blocks/{page_id}/children", params)
+        children.extend(data.get("results") or [])
+        if not data.get("has_more"):
+            break
+        cursor = data.get("next_cursor")
+    return children
+
+
+def clear_notion_page(page_id: str) -> None:
+    for child in notion_page_children(page_id):
+        child_id = child.get("id")
+        if not child_id:
+            continue
+        notion_request("PATCH", f"blocks/{child_id}", {"archived": True})
+        time.sleep(0.05)
 
 
 def notion_item_blocks(item: AnalyzedArticle, sent_to_digest: bool, index: int) -> List[Dict[str, Any]]:
@@ -2835,6 +2885,135 @@ def publish_notion_analysis_page(
         "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
         "item_count": len(sorted_items),
         "digest_count": len(selected_clusters),
+    }
+    save_notion_pages(pages)
+    return page_url
+
+
+def notion_dashboard_enabled(cfg: Dict[str, Any]) -> bool:
+    notion_cfg = cfg.get("notion", {})
+    if not notion_cfg.get("dashboard_enabled", False):
+        return False
+    return bool(os.getenv("NOTION_API_KEY") and os.getenv("NOTION_DASHBOARD_PARENT_PAGE_ID"))
+
+
+def create_notion_child_page(parent_page_id: str, title: str) -> Dict[str, Any]:
+    return notion_request(
+        "POST",
+        "pages",
+        {
+            "parent": {
+                "type": "page_id",
+                "page_id": normalize_notion_page_id(parent_page_id),
+            },
+            "properties": {"title": {"title": notion_text(title, max_chars=200)}},
+        },
+    )
+
+
+def kst_date_from_run_log(run_log: Dict[str, Any]) -> str:
+    run_id = str(run_log.get("run_id") or "")
+    if len(run_id) >= 8 and run_id[:8].isdigit():
+        return f"{run_id[:4]}-{run_id[4:6]}-{run_id[6:8]}"
+    started_at = str(run_log.get("started_at") or "")
+    return started_at[:10] if len(started_at) >= 10 else time.strftime("%Y-%m-%d")
+
+
+def notion_dashboard_blocks(run_log: Dict[str, Any]) -> List[Dict[str, Any]]:
+    summary = run_log.get("summary") or {}
+    sources = run_log.get("sources") or []
+    run_date = kst_date_from_run_log(run_log)
+    failed_sources = [item for item in sources if item.get("status") == "fail"]
+    empty_sources = [item for item in sources if item.get("status") == "empty"]
+    top_new_sources = sorted(
+        sources,
+        key=lambda item: int(item.get("new_count") or 0),
+        reverse=True,
+    )[:10]
+    article_equation = (
+        f"{summary.get('total_fetched_articles', 0)} Fetch 후보 - "
+        f"{summary.get('seen_skipped_count', 0)} Seen 제외 - "
+        f"{summary.get('non_article_skipped_count', 0)} 비기사 제외 = "
+        f"{summary.get('total_new_articles', 0)} 신규 기사"
+    )
+    notion_url = summary.get("notion_page_url")
+
+    blocks: List[Dict[str, Any]] = [
+        notion_heading(f"IP Monitor 운영 대시보드 - {run_date}"),
+        notion_callout("관리자용 페이지입니다. 이 parent page를 외부 공개하지 않으면 관리자만 볼 수 있습니다."),
+        notion_paragraph(f"실행: {run_log.get('run_id', '-')} | 시작: {run_log.get('started_at', '-')} | 종료: {run_log.get('finished_at', '-')}"),
+        notion_paragraph(f"Actions: {(run_log.get('github') or {}).get('run_url') or '-'}"),
+        notion_divider(),
+        notion_heading("기사"),
+        notion_bullet(f"신규 기사: {summary.get('total_new_articles', 0)}"),
+        notion_bullet(f"산식: {article_equation}"),
+        notion_bullet(f"분석 시도/성공/실패: {summary.get('analysis_attempted_count', 0)} / {summary.get('analysis_success_count', 0)} / {summary.get('analysis_failed_count', 0)}"),
+        notion_bullet(f"분석 사전 제외: {summary.get('analysis_prefilter_skipped_count', 0)}"),
+        notion_heading("소스"),
+        notion_bullet(f"전체/정상/빈값/실패: {summary.get('total_sources', 0)} / {summary.get('ok_sources', 0)} / {summary.get('empty_sources', 0)} / {summary.get('failed_sources', 0)}"),
+        notion_heading("시간"),
+        notion_bullet(f"총 소요: {round(float(run_log.get('duration_seconds') or 0) / 60, 1)}분"),
+        notion_bullet(f"수집/분석: {round(float(summary.get('fetch_duration_seconds') or 0) / 60, 1)}분 / {round(float(summary.get('analysis_duration_seconds') or 0) / 60, 1)}분"),
+        notion_heading("Claude"),
+        notion_bullet(f"입력/출력 토큰: {summary.get('claude_input_tokens', '-') or '-'} / {summary.get('claude_output_tokens', '-') or '-'}"),
+        notion_bullet(f"추정 비용: ${float(summary.get('claude_estimated_cost_usd') or 0):.4f}"),
+        notion_heading("링크"),
+        notion_bullet(f"전체 분석결과: {notion_url or '-'}"),
+        notion_divider(),
+    ]
+
+    blocks.append(notion_heading("빈 소스", level=3))
+    if empty_sources:
+        for item in empty_sources[:30]:
+            blocks.append(notion_bullet(f"{item.get('region', '')} | {item.get('name', '')} | {item.get('monitor_url', '')}"))
+    else:
+        blocks.append(notion_paragraph("빈 소스 없음"))
+
+    blocks.append(notion_heading("실패 소스", level=3))
+    if failed_sources:
+        for item in failed_sources[:30]:
+            blocks.append(notion_bullet(f"{item.get('region', '')} | {item.get('name', '')} | {item.get('error', '')}"))
+    else:
+        blocks.append(notion_paragraph("실패 소스 없음"))
+
+    blocks.append(notion_heading("신규 기사 많은 소스", level=3))
+    for item in top_new_sources:
+        blocks.append(notion_bullet(f"{item.get('new_count', 0)}건 | {item.get('region', '')} | {item.get('name', '')}"))
+
+    if run_log.get("analysis_errors"):
+        blocks.append(notion_heading("분석 오류", level=3))
+        for item in run_log["analysis_errors"][:20]:
+            blocks.append(notion_bullet(f"{item.get('source', '')} | {item.get('title', '')} | {item.get('error', '')}"))
+
+    return blocks
+
+
+def publish_notion_dashboard_page(run_log: Dict[str, Any], cfg: Dict[str, Any]) -> Optional[str]:
+    if not notion_dashboard_enabled(cfg):
+        return None
+
+    notion_cfg = cfg.get("notion", {})
+    title = str(notion_cfg.get("dashboard_title") or "IP Monitor 운영 대시보드")
+    pages = load_notion_pages()
+    dashboard_info = pages.get("admin_dashboard") if isinstance(pages.get("admin_dashboard"), dict) else {}
+    page_id = dashboard_info.get("page_id") or os.getenv("NOTION_DASHBOARD_PAGE_ID")
+    page_url = dashboard_info.get("url")
+
+    if not page_id:
+        response = create_notion_child_page(os.getenv("NOTION_DASHBOARD_PARENT_PAGE_ID", ""), title)
+        page_id = response.get("id")
+        page_url = response.get("url")
+    if not page_id:
+        return page_url
+
+    clear_notion_page(page_id)
+    append_notion_blocks(page_id, notion_dashboard_blocks(run_log))
+
+    pages["admin_dashboard"] = {
+        "page_id": page_id,
+        "url": page_url,
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "run_id": run_log.get("run_id"),
     }
     save_notion_pages(pages)
     return page_url
@@ -3376,6 +3555,8 @@ def main():
             "daily_results_path": None,
             "notion_page_saved": False,
             "notion_page_url": None,
+            "notion_dashboard_saved": False,
+            "notion_dashboard_url": None,
             "digest_saved": False,
             "digest_telegram_messages": 0,
             "telegram_send_enabled": cfg.get("telegram", {}).get("send_enabled", False),
@@ -3602,6 +3783,15 @@ def main():
         print('새로 분석된 결과가 없습니다.')
         run_log["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         run_log["duration_seconds"] = round(time.time() - run_started, 3)
+        try:
+            dashboard_url = publish_notion_dashboard_page(run_log, cfg)
+            if dashboard_url:
+                run_log["summary"]["notion_dashboard_saved"] = True
+                run_log["summary"]["notion_dashboard_url"] = dashboard_url
+                print(f"Notion 관리자 대시보드 업데이트: {dashboard_url}")
+        except Exception as e:
+            print("Notion 관리자 대시보드 업데이트 실패:", e)
+            run_log["notion_dashboard_error"] = str(e)
         log_path = save_run_log(run_log)
         print(f'[DEBUG] 실행 로그 저장: {log_path}')
         return
@@ -3671,9 +3861,19 @@ def main():
     )
     save_sent_digest_topics(updated_sent_topics)
 
-    print('완료. results.json / telegram_digest.txt 생성(또는 갱신).')
     run_log["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
     run_log["duration_seconds"] = round(time.time() - run_started, 3)
+    try:
+        dashboard_url = publish_notion_dashboard_page(run_log, cfg)
+        if dashboard_url:
+            run_log["summary"]["notion_dashboard_saved"] = True
+            run_log["summary"]["notion_dashboard_url"] = dashboard_url
+            print(f"Notion 관리자 대시보드 업데이트: {dashboard_url}")
+    except Exception as e:
+        print("Notion 관리자 대시보드 업데이트 실패:", e)
+        run_log["notion_dashboard_error"] = str(e)
+
+    print('완료. results.json / telegram_digest.txt 생성(또는 갱신).')
     log_path = save_run_log(run_log)
     print(f'[DEBUG] 실행 로그 저장: {log_path}')
 
