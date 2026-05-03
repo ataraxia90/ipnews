@@ -25,6 +25,11 @@ telegram:
   max_messages: 20
   timeout_seconds: 10
 
+notion:
+  publish_enabled: true
+  page_title_prefix: "IP 동향 전체 분석결과"
+  max_items: 80
+
 sources:
 
   # ============================================================

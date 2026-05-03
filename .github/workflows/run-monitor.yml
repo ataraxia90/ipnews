@@ -20,6 +20,8 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+      NOTION_PARENT_PAGE_ID: ${{ secrets.NOTION_PARENT_PAGE_ID }}
 
     steps:
       - name: Checkout
@@ -54,5 +56,6 @@ jobs:
             data/telegram_digest.txt
             data/telegram_raw_review.txt
             data/failed_sources.yaml
+            data/notion_pages.json
             data/run_logs/*.json
           if-no-files-found: ignore

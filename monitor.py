@@ -85,6 +85,8 @@ SENT_DIGEST_TOPICS_PATH = 'data/sent_digest_topics.json'
 DIGEST_PATH = 'data/telegram_digest.txt'
 RAW_REVIEW_DIGEST_PATH = 'data/telegram_raw_review.txt'
 SOURCE_CHECK_REPORT_PATH = 'data/source_check_report.json'
+NOTION_PAGES_PATH = 'data/notion_pages.json'
+NOTION_VERSION = '2025-09-03'
 
 # Standard Claude Sonnet API pricing, USD per million tokens.
 # The current prompt does not use prompt caching, but cache fields are recorded
@@ -2587,10 +2589,13 @@ def update_sent_digest_topics(
 def render_telegram_digest(
     selected_clusters: List[DigestTopicCluster],
     run_date: Optional[str] = None,
+    full_results_url: Optional[str] = None,
 ) -> str:
     lines = []
     date_part = f"{run_date} " if run_date else ""
     lines.append(f"IP 동향 Digest - {date_part}상위 {len(selected_clusters)}건")
+    if full_results_url:
+        lines.append(f"전체 분석결과: {full_results_url}")
     lines.append("")
 
     if not selected_clusters:
@@ -2634,19 +2639,205 @@ def build_telegram_digest(
     top_n: int = 5,
     min_importance: int = 0,
     run_date: Optional[str] = None,
+    full_results_url: Optional[str] = None,
 ) -> str:
     selected_clusters, _ = select_digest_clusters(
         analyzed,
         top_n=top_n,
         min_importance=min_importance,
     )
-    return render_telegram_digest(selected_clusters, run_date=run_date)
+    return render_telegram_digest(selected_clusters, run_date=run_date, full_results_url=full_results_url)
 
 
 def save_digest(text: str):
     os.makedirs('data', exist_ok=True)
     with open(DIGEST_PATH, 'w', encoding='utf-8') as f:
         f.write(text)
+
+
+def load_notion_pages() -> Dict[str, Any]:
+    if not os.path.exists(NOTION_PAGES_PATH):
+        return {}
+    try:
+        with open(NOTION_PAGES_PATH, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_notion_pages(items: Dict[str, Any]) -> None:
+    os.makedirs('data', exist_ok=True)
+    with open(NOTION_PAGES_PATH, 'w', encoding='utf-8') as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+
+
+def notion_enabled(cfg: Dict[str, Any]) -> bool:
+    notion_cfg = cfg.get("notion", {})
+    if not notion_cfg.get("publish_enabled", False):
+        return False
+    return bool(os.getenv("NOTION_API_KEY") and os.getenv("NOTION_PARENT_PAGE_ID"))
+
+
+def notion_headers() -> Dict[str, str]:
+    return {
+        "Authorization": f"Bearer {os.getenv('NOTION_API_KEY')}",
+        "Notion-Version": NOTION_VERSION,
+        "Content-Type": "application/json",
+    }
+
+
+def normalize_notion_page_id(value: Optional[str]) -> str:
+    text = str(value or "").strip()
+    match = re.search(
+        r"([0-9a-fA-F]{8}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{4}-?[0-9a-fA-F]{12})",
+        text,
+    )
+    if not match:
+        return text
+    raw = match.group(1).replace("-", "")
+    return f"{raw[:8]}-{raw[8:12]}-{raw[12:16]}-{raw[16:20]}-{raw[20:]}"
+
+
+def notion_request(method: str, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    url = f"https://api.notion.com/v1/{path.lstrip('/')}"
+    for attempt in range(3):
+        resp = requests.request(method, url, headers=notion_headers(), json=payload, timeout=30)
+        if resp.status_code == 429 and attempt < 2:
+            retry_after = int(resp.headers.get("Retry-After") or "1")
+            time.sleep(max(1, retry_after))
+            continue
+        if 200 <= resp.status_code < 300:
+            return resp.json()
+        raise RuntimeError(f"Notion API {method} {path} failed: {resp.status_code} {resp.text[:500]}")
+    raise RuntimeError(f"Notion API {method} {path} failed after retries")
+
+
+def notion_text(content: Any, max_chars: int = 1900) -> List[Dict[str, Any]]:
+    text = re.sub(r"\s+", " ", str(content or "")).strip()
+    if not text:
+        return []
+    return [{"type": "text", "text": {"content": text[:max_chars]}}]
+
+
+def notion_paragraph(text: Any) -> Dict[str, Any]:
+    return {"object": "block", "type": "paragraph", "paragraph": {"rich_text": notion_text(text)}}
+
+
+def notion_bullet(text: Any) -> Dict[str, Any]:
+    return {"object": "block", "type": "bulleted_list_item", "bulleted_list_item": {"rich_text": notion_text(text)}}
+
+
+def notion_heading(text: Any, level: int = 2) -> Dict[str, Any]:
+    block_type = "heading_3" if level == 3 else "heading_2"
+    return {"object": "block", "type": block_type, block_type: {"rich_text": notion_text(text)}}
+
+
+def notion_divider() -> Dict[str, Any]:
+    return {"object": "block", "type": "divider", "divider": {}}
+
+
+def notion_item_blocks(item: AnalyzedArticle, sent_to_digest: bool, index: int) -> List[Dict[str, Any]]:
+    marker = "Digest 발송" if sent_to_digest else "전문 only"
+    title = compact_digest_text(item.title, max_chars=160)
+    blocks = [
+        notion_heading(f"{index}. {title}", level=3),
+        notion_bullet(f"상태: {marker}"),
+        notion_bullet(f"점수/분류/출처: {item.importance_score} | {item.category} | {item.source}"),
+        notion_bullet(f"지역: {digest_region_label(item)}"),
+    ]
+    topic_label = getattr(item, "topic_label", "") or ""
+    if topic_label:
+        blocks.append(notion_bullet(f"이슈: {topic_label}"))
+    if item.summary_ko:
+        blocks.append(notion_paragraph(f"요약: {item.summary_ko}"))
+    digest_bullets = getattr(item, "digest_bullets", None) or []
+    for bullet in digest_bullets[:4]:
+        blocks.append(notion_bullet(bullet))
+    for point in (item.key_points or [])[:3]:
+        blocks.append(notion_bullet(f"시사점: {point}"))
+    blocks.append(notion_bullet(f"원문: {item.url}"))
+    blocks.append(notion_divider())
+    return blocks
+
+
+def append_notion_blocks(page_id: str, blocks: List[Dict[str, Any]], chunk_size: int = 80) -> None:
+    for start in range(0, len(blocks), chunk_size):
+        chunk = blocks[start:start + chunk_size]
+        notion_request(
+            "PATCH",
+            f"blocks/{page_id}/children",
+            {"children": chunk},
+        )
+        time.sleep(0.35)
+
+
+def publish_notion_analysis_page(
+    analyzed_items: List[AnalyzedArticle],
+    selected_clusters: List[DigestTopicCluster],
+    run_date: str,
+    cfg: Dict[str, Any],
+) -> Optional[str]:
+    if not notion_enabled(cfg):
+        return None
+    if not analyzed_items:
+        return None
+
+    notion_cfg = cfg.get("notion", {})
+    max_items = int(notion_cfg.get("max_items") or 80)
+    title_prefix = str(notion_cfg.get("page_title_prefix") or "IP 동향 전체 분석결과")
+    selected_urls = {cluster.representative.url for cluster in selected_clusters}
+    selected_keys = {digest_cluster_topic_key(cluster) for cluster in selected_clusters}
+    sorted_items = sorted(
+        analyzed_items,
+        key=lambda item: int(getattr(item, "importance_score", 0) or 0),
+        reverse=True,
+    )[:max_items]
+    title = f"{title_prefix} - {run_date}"
+
+    response = notion_request(
+        "POST",
+        "pages",
+        {
+            "parent": {
+                "type": "page_id",
+                "page_id": normalize_notion_page_id(os.getenv("NOTION_PARENT_PAGE_ID")),
+            },
+            "properties": {"title": {"title": notion_text(title, max_chars=200)}},
+        },
+    )
+    page_id = response.get("id")
+    page_url = response.get("url")
+    if not page_id:
+        return page_url
+
+    digest_count = sum(1 for item in sorted_items if item.url in selected_urls or item.topic_key in selected_keys)
+    blocks: List[Dict[str, Any]] = [
+        notion_heading(title),
+        notion_paragraph(
+            f"총 분석 {len(analyzed_items)}건 중 {len(selected_clusters)}건은 텔레그램 Digest로 발송되었습니다. "
+            f"이 페이지에는 점수순 최대 {max_items}건을 제공합니다."
+        ),
+        notion_bullet(f"Digest 발송 후보: {digest_count}건"),
+        notion_bullet(f"생성일: {run_date}"),
+        notion_divider(),
+    ]
+    for index, item in enumerate(sorted_items, start=1):
+        sent_to_digest = item.url in selected_urls or item.topic_key in selected_keys
+        blocks.extend(notion_item_blocks(item, sent_to_digest, index))
+
+    append_notion_blocks(page_id, blocks)
+
+    pages = load_notion_pages()
+    pages[run_date] = {
+        "page_id": page_id,
+        "url": page_url,
+        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "item_count": len(sorted_items),
+        "digest_count": len(selected_clusters),
+    }
+    save_notion_pages(pages)
+    return page_url
 
 
 def split_telegram_messages(lines: List[str], max_chars: int = 3500) -> List[str]:
@@ -3183,6 +3374,8 @@ def main():
             "results_saved": False,
             "daily_results_saved": False,
             "daily_results_path": None,
+            "notion_page_saved": False,
+            "notion_page_url": None,
             "digest_saved": False,
             "digest_telegram_messages": 0,
             "telegram_send_enabled": cfg.get("telegram", {}).get("send_enabled", False),
@@ -3436,7 +3629,27 @@ def main():
     run_log["summary"]["digest_recent_topic_skipped_count"] = len(recent_topic_skips)
     run_log["digest_recent_topic_skips"] = recent_topic_skips[:100]
 
-    digest_text = render_telegram_digest(selected_digest_clusters, run_date=digest_run_date)
+    notion_page_url = None
+    try:
+        notion_page_url = publish_notion_analysis_page(
+            analyzed_items,
+            selected_digest_clusters,
+            digest_run_date,
+            cfg,
+        )
+        if notion_page_url:
+            run_log["summary"]["notion_page_saved"] = True
+            run_log["summary"]["notion_page_url"] = notion_page_url
+            print(f"Notion 전체 분석결과 페이지 생성: {notion_page_url}")
+    except Exception as e:
+        print("Notion 페이지 생성 실패:", e)
+        run_log["notion_error"] = str(e)
+
+    digest_text = render_telegram_digest(
+        selected_digest_clusters,
+        run_date=digest_run_date,
+        full_results_url=notion_page_url,
+    )
     save_digest(digest_text)
     run_log["summary"]["digest_saved"] = True
     digest_telegram_started = time.time()
