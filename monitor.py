@@ -105,6 +105,8 @@ SUPABASE_SEEN_KEY = 'seen_urls'
 SUPABASE_RESULTS_KEY = 'analysis_results'
 SUPABASE_SENT_DIGEST_TOPICS_KEY = 'sent_digest_topics'
 SUPABASE_NOTION_PAGES_KEY = 'notion_pages'
+SUPABASE_RAW_REVIEW_MESSAGES_KEY = 'telegram_raw_review'
+SUPABASE_DIGEST_MESSAGE_KEY = 'telegram_digest'
 SUPABASE_RUN_LOG_PREFIX = 'run_log'
 SUPABASE_LATEST_RUN_LOG_KEY = 'run_log_latest'
 
@@ -3448,6 +3450,33 @@ def save_raw_review_messages(messages: List[str], path: str = RAW_REVIEW_DIGEST_
         f.write("\n\n--- MESSAGE BREAK ---\n\n".join(messages))
 
 
+def save_telegram_messages_state(
+    base_key: str,
+    run_id: str,
+    messages: List[str],
+    message_type: str,
+) -> bool:
+    run_date = run_date_from_run_id(run_id)
+    payload = {
+        "run_id": run_id,
+        "run_date": run_date,
+        "message_type": message_type,
+        "message_count": len(messages),
+        "messages": messages,
+        "saved_at": local_timestamp(),
+    }
+    saved = False
+    dated_key = f"{base_key}_{run_date.replace('-', '')}"
+    if save_supabase_state(dated_key, payload):
+        print(f"Supabase {dated_key} 저장: {len(messages)}개")
+        saved = True
+    latest_key = f"{base_key}_latest"
+    if save_supabase_state(latest_key, payload):
+        print(f"Supabase {latest_key} 저장: {len(messages)}개")
+        saved = True
+    return saved
+
+
 def telegram_send_enabled(cfg: Dict[str, Any], key: str) -> bool:
     if '--no-telegram' in sys.argv:
         return False
@@ -3604,6 +3633,7 @@ def main():
             "raw_articles_saved": False,
             "raw_review_digest_saved": False,
             "raw_review_telegram_messages": 0,
+            "raw_review_supabase_saved": False,
             "source_check_report_saved": False,
             "failed_sources_yaml_saved": False,
             "results_saved": False,
@@ -3614,6 +3644,7 @@ def main():
             "notion_dashboard_saved": False,
             "notion_dashboard_url": None,
             "digest_saved": False,
+            "digest_supabase_saved": False,
             "digest_telegram_messages": 0,
             "telegram_send_enabled": cfg.get("telegram", {}).get("send_enabled", False),
             "telegram_review_send_enabled": cfg.get("telegram", {}).get("review_send_enabled", False),
@@ -3767,6 +3798,12 @@ def main():
         source_check_records=source_check_records,
     )
     save_raw_review_messages(raw_review_messages, RAW_REVIEW_DIGEST_PATH)
+    run_log["summary"]["raw_review_supabase_saved"] = save_telegram_messages_state(
+        SUPABASE_RAW_REVIEW_MESSAGES_KEY,
+        run_id,
+        raw_review_messages,
+        "raw_review",
+    )
     raw_review_telegram_started = time.time()
     send_telegram_message_chunks(
         raw_review_messages,
@@ -3913,6 +3950,13 @@ def main():
     )
     save_digest(digest_text)
     run_log["summary"]["digest_saved"] = True
+    digest_messages_for_state = split_telegram_messages(digest_text)
+    run_log["summary"]["digest_supabase_saved"] = save_telegram_messages_state(
+        SUPABASE_DIGEST_MESSAGE_KEY,
+        run_id,
+        digest_messages_for_state,
+        "digest",
+    )
     digest_telegram_started = time.time()
     digest_telegram_messages = send_telegram_messages(
         digest_text,
