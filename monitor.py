@@ -2081,19 +2081,14 @@ class ClaudeClient:
    - AI, 데이터, 표준필수특허, 디지털 저작권 등 전략 분야 관련성
    - 국내 제도 개선 논의에 활용 가능성
    - 시의성·긴급성
-3. 한국어로 3~5문장 요약을 작성하라. 요약에는 시사점이나 평가가 들어가지 않고, 링크에서 나타난 사실만을 넣는다.
+3. 한국어로 2문장 요약을 작성하라. 요약에는 시사점이나 평가가 들어가지 않고, 링크에서 나타난 사실만을 넣는다.
    - 원문에 한국, 대한민국, South Korea, Korea, KIPO 등 한국 관련 표현이 직접 등장하지 않으면 요약에 한국을 언급하지 마라.
    - 원문이 한국을 직접 언급하지 않는데 "한국도 평가 대상", "한국에 직접 영향", "한국이 지정될 경우"처럼 확정적·가정적 한국 중심 문장을 만들지 마라.
 4. 1~2단어의 카테고리(예: 특허정책, 저작권, AI규제, 표준특허, 무역분쟁 등)를 정하라.
-5. 핵심 시사점 2~3문장을 작성하라.
+5. 핵심 시사점 2문장을 작성하라.
    - 원문에 한국이 직접 언급되지 않은 경우 시사점은 "한국에 대한 직접 영향"이 아니라 "한국 정책당국/기업이 참고할 만한 간접 동향" 수준으로 표현하라.
    - 한국 관련성은 제도 비교, 통상 환경, 해외 진출 기업 리스크 등 간접적 의미로만 설명하라.
-6. 텔레그램 digest에 바로 넣을 수 있는 개조식 항목 digest_bullets를 2~4개 작성하라.
-   - 모든 기사에 "배경/결정/쟁점" 같은 동일한 틀을 강제하지 마라.
-   - 기사 성격에 맞춰 "발표", "결정", "변경", "쟁점", "영향", "일정", "참고" 등 자연스러운 라벨을 선택하라.
-   - 각 항목은 "라벨: 내용" 형식의 한 문장으로 작성한다.
-   - summary_ko보다 짧고 스캔하기 쉽게 작성하되, 원문에 없는 사실을 만들지 마라.
-7. '한국'이나 'South Korea'를 직접 언급하고 있으면 중요도 점수를 상향하고, 요약에 해당 내용을 포함하라. 직접 언급이 없으면 한국 관련성만으로 과도하게 점수를 올리지 마라.
+7. '한국'이나 'South Korea' '삼성전자' 'samsung' 'sk'등 한국 기업을 직접 언급하고 있으면 중요도 점수를 상향하고, 요약에 해당 내용을 포함하라. 직접 언급이 없으면 한국 관련성만으로 과도하게 점수를 올리지 마라.
 8. 같은 사건·보고서·판례·법안·정책 발표·기업 발표를 묶을 수 있도록 topic_key와 topic_label을 작성하라.
    - topic_key는 영문 소문자 slug로 작성한다. 예: "2026-ustr-special-301-report", "uspto-gen-ai-patent-examination"
    - topic_label은 사람이 읽기 쉬운 짧은 이슈명으로 작성한다. 예: "USTR 2026 Special 301 Report"
@@ -2991,6 +2986,7 @@ def notion_dashboard_blocks(run_log: Dict[str, Any]) -> List[Dict[str, Any]]:
     article_equation = (
         f"{summary.get('total_fetched_articles', 0)} Fetch 후보 - "
         f"{summary.get('seen_skipped_count', 0)} Seen 제외 - "
+        f"{summary.get('stale_skipped_count', 0)} 오래된 기사 제외 - "
         f"{summary.get('non_article_skipped_count', 0)} 비기사 제외 = "
         f"{summary.get('total_new_articles', 0)} 신규 기사"
     )
@@ -3225,6 +3221,30 @@ def format_review_date(
     return text or "-"
 
 
+def article_stale_reason(
+    article: Article,
+    run_date: str,
+    stale_days: int,
+) -> Optional[str]:
+    if stale_days <= 0:
+        return None
+
+    article_date_text = format_review_date(
+        article.published,
+        article.url,
+        generated_at=f"{run_date} 23:59",
+    )
+    article_date = parse_iso_date(article_date_text)
+    run_dt = parse_iso_date(run_date)
+    if not article_date or not run_dt:
+        return None
+
+    age_days = (run_dt - article_date).days
+    if age_days > stale_days:
+        return f"published {article_date.strftime('%Y-%m-%d')} ({age_days} days old)"
+    return None
+
+
 def build_raw_review_summary_lines(
     articles: List[Article],
     source_check_records: Optional[List[Dict[str, Any]]] = None,
@@ -3238,6 +3258,7 @@ def build_raw_review_summary_lines(
     fetch_candidate_count = sum(int(r.get("count") or 0) for r in source_check_records)
     seen_skipped_count = sum(int(r.get("seen_skipped_count") or 0) for r in source_check_records)
     non_article_skipped_count = sum(int(r.get("non_article_skipped_count") or 0) for r in source_check_records)
+    stale_skipped_count = sum(int(r.get("stale_skipped_count") or 0) for r in source_check_records)
     problem_sources = [
         r for r in source_check_records
         if r.get("status") in ("fail", "empty")
@@ -3256,7 +3277,7 @@ def build_raw_review_summary_lines(
         "요약 리포트",
         "",
         f"- 신규 기사: {len(articles)}개",
-        f"- 전체 fetch 후보: {fetch_candidate_count}개 / seen 제외 {seen_skipped_count}개 / 비기사 제외 {non_article_skipped_count}개",
+        f"- 전체 fetch 후보: {fetch_candidate_count}개 / seen 제외 {seen_skipped_count}개 / 비기사 제외 {non_article_skipped_count}개 / 오래된 기사 제외 {stale_skipped_count}개",
         f"- 소스 상태: 성공 {ok_sources}개 / 빈값 {empty_sources}개 / 실패 {failed_sources}개 / 전체 {total_sources}개",
         f"- 날짜 누락 기사: {len(missing_date_articles)}개",
         f"- 제목 잘림/깨짐 의심: {len(title_attention_articles)}개",
@@ -3579,6 +3600,7 @@ def main():
     already_analyzed = set(existing_results_index.keys())
 
     fetch_timeout = cfg.get('fetch', {}).get('timeout_seconds', 20)
+    stale_article_days = int(cfg.get('fetch', {}).get('stale_article_days', 14) or 0)
     top_n = cfg.get('analysis', {}).get('top_n_for_digest', 5)
     min_importance = cfg.get('analysis', {}).get('min_importance_for_digest', 0)
     recent_topic_days = int(cfg.get('analysis', {}).get('recent_topic_days', 3) or 3)
@@ -3639,6 +3661,7 @@ def main():
             "seen_skipped_count": 0,
             "already_analyzed_skipped_count": 0,
             "non_article_skipped_count": 0,
+            "stale_skipped_count": 0,
             "ok_sources": 0,
             "empty_sources": 0,
             "failed_sources": 0,
@@ -3676,6 +3699,7 @@ def main():
         "sources": [],
         "analysis_errors": [],
         "analysis_prefilter_skips": [],
+        "stale_article_skips": [],
         "digest_recent_topic_skips": [],
     }
 
@@ -3714,6 +3738,7 @@ def main():
             "seen_skipped_count": 0,
             "already_analyzed_skipped_count": 0,
             "non_article_skipped_count": 0,
+            "stale_skipped_count": 0,
             "error": "",
             "elapsed_seconds": None,
             "sample_articles": [],
@@ -3756,6 +3781,20 @@ def main():
                 seen.add(a.url)
                 continue
 
+            stale_reason = article_stale_reason(a, run_date_from_run_id(run_id), stale_article_days)
+            if stale_reason:
+                source_log["stale_skipped_count"] += 1
+                seen.add(a.url)
+                if len(run_log["stale_article_skips"]) < 100:
+                    run_log["stale_article_skips"].append({
+                        "source": a.source,
+                        "title": a.title,
+                        "url": a.url,
+                        "published": a.published,
+                        "reason": stale_reason,
+                    })
+                continue
+
             fresh.append(a)
             seen.add(a.url)
 
@@ -3768,6 +3807,7 @@ def main():
                 "seen_skipped_count": source_log["seen_skipped_count"],
                 "already_analyzed_skipped_count": source_log["already_analyzed_skipped_count"],
                 "non_article_skipped_count": source_log["non_article_skipped_count"],
+                "stale_skipped_count": source_log["stale_skipped_count"],
             })
         source_log["elapsed_seconds"] = round(time.time() - source_started, 3)
         run_log["sources"].append(source_log)
@@ -3791,6 +3831,7 @@ def main():
     run_log["summary"]["seen_skipped_count"] = sum(int(s["seen_skipped_count"]) for s in run_log["sources"])
     run_log["summary"]["already_analyzed_skipped_count"] = sum(int(s["already_analyzed_skipped_count"]) for s in run_log["sources"])
     run_log["summary"]["non_article_skipped_count"] = sum(int(s["non_article_skipped_count"]) for s in run_log["sources"])
+    run_log["summary"]["stale_skipped_count"] = sum(int(s["stale_skipped_count"]) for s in run_log["sources"])
     run_log["summary"]["ok_sources"] = ok_count
     run_log["summary"]["empty_sources"] = empty_count
     run_log["summary"]["failed_sources"] = fail_count

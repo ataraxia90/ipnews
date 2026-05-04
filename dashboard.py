@@ -85,6 +85,7 @@ def run_row(run: Dict[str, Any]) -> Dict[str, Any]:
         "new_articles": summary.get("total_new_articles", 0),
         "fetched": summary.get("total_fetched_articles", 0),
         "seen_skipped": summary.get("seen_skipped_count", 0),
+        "stale_skipped": summary.get("stale_skipped_count", 0),
         "ok_sources": summary.get("ok_sources", 0),
         "empty_sources": summary.get("empty_sources", 0),
         "failed_sources": summary.get("failed_sources", 0),
@@ -110,6 +111,7 @@ def source_rows(run: Dict[str, Any]) -> List[Dict[str, Any]]:
             "new": source.get("new_count", 0),
             "seen": source.get("seen_skipped_count", 0),
             "non_article": source.get("non_article_skipped_count", 0),
+            "stale": source.get("stale_skipped_count", 0),
             "elapsed_sec": source.get("elapsed_seconds", 0),
             "error": source.get("error", ""),
             "url": source.get("monitor_url", ""),
@@ -154,12 +156,14 @@ def kpis_for_run(run: Dict[str, Any]) -> Dict[str, Any]:
     fetched = summary.get("total_fetched_articles", 0)
     seen_skipped = summary.get("seen_skipped_count", 0)
     non_article_skipped = summary.get("non_article_skipped_count", 0)
+    stale_skipped = summary.get("stale_skipped_count", 0)
     new_articles = summary.get("total_new_articles", 0)
     return {
         "new_articles": new_articles,
         "fetched": fetched,
         "seen_skipped": seen_skipped,
         "non_article_skipped": non_article_skipped,
+        "stale_skipped": stale_skipped,
         "total_sources": summary.get("total_sources", 0),
         "empty_sources": summary.get("empty_sources", 0),
         "failed_sources": summary.get("failed_sources", 0),
@@ -173,8 +177,9 @@ def kpis_for_run(run: Dict[str, Any]) -> Dict[str, Any]:
             "fetched": fetched,
             "seen_skipped": seen_skipped,
             "non_article_skipped": non_article_skipped,
+            "stale_skipped": stale_skipped,
             "new_articles": new_articles,
-            "calculated_new_articles": fetched - seen_skipped - non_article_skipped,
+            "calculated_new_articles": fetched - seen_skipped - stale_skipped - non_article_skipped,
         },
     }
 
@@ -513,7 +518,7 @@ HTML = """<!doctype html>
     function renderKpis() {
       const k = current.kpis || {};
       const e = k.article_equation || {};
-      const formula = e.calculated_new_articles === e.new_articles ? "= A-B-C" : "산식 확인 필요";
+      const formula = e.calculated_new_articles === e.new_articles ? "= A-B-D-C" : "산식 확인 필요";
       const tokenLabel = (v) => v === null || v === undefined ? "-" : Number(v).toLocaleString();
       const costLabel = (v) => v === null || v === undefined ? "-" : `$${Number(v).toFixed(4)}`;
       const costPeriod = document.getElementById("costPeriod").value || "week";
@@ -525,6 +530,7 @@ HTML = """<!doctype html>
             [`신규 기사 (${formula})`, k.new_articles],
             ["Fetch 후보 (A)", k.fetched],
             ["Seen 제외 (B)", k.seen_skipped],
+            ["오래된 기사 제외 (D)", k.stale_skipped],
             ["비기사 제외 (C)", k.non_article_skipped],
           ],
         },
@@ -667,6 +673,8 @@ HTML = """<!doctype html>
         {key: "fetched", label: "Fetch"},
         {key: "new", label: "신규"},
         {key: "seen", label: "Seen"},
+        {key: "stale", label: "오래됨"},
+        {key: "non_article", label: "비기사"},
         {key: "elapsed_sec", label: "초"},
         {key: "error", label: "오류"},
         {key: "url", label: "URL", render: (v) => linkCell(v, "열기")},
