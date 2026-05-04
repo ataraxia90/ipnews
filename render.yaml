@@ -1,0 +1,31 @@
+services:
+  - type: cron
+    name: ip-monitor-daily
+    runtime: docker
+    plan: starter
+    schedule: "0 0 * * *"
+    dockerfilePath: ./Dockerfile
+    dockerCommand: "python monitor.py"
+    envVars:
+      - key: PYTHONUTF8
+        value: "1"
+      - key: MONITOR_SCHEDULED_RUN
+        value: "true"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_REVIEW_CHAT_ID
+        sync: false
+      - key: TELEGRAM_DIGEST_CHAT_ID
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: NOTION_API_KEY
+        sync: false
+      - key: NOTION_PARENT_PAGE_ID
+        sync: false
+      - key: NOTION_DASHBOARD_PARENT_PAGE_ID
+        sync: false

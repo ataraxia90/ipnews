@@ -1,0 +1,12 @@
+.env
+.git
+.github
+.idea
+venv
+__pycache__
+*.pyc
+data
+debug_*.png
+test.py
+test_html_debug.py
+test_html_debug_report.txt

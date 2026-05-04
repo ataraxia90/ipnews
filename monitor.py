@@ -8,6 +8,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
 from urllib.parse import parse_qs, unquote, urljoin, urlparse
+from zoneinfo import ZoneInfo
 
 import requests
 import yaml
@@ -20,6 +21,8 @@ from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 
 load_dotenv()
+
+LOCAL_TZ = ZoneInfo("Asia/Seoul")
 
 @dataclass
 class SourceConfig:
@@ -107,6 +110,24 @@ SUPABASE_LATEST_RUN_LOG_KEY = 'run_log_latest'
 
 # max_items 기반 수집 제한은 seen 적용 전 후보 수를 자르는 방식이라 운영상
 # 의미가 약해졌다. 설정에서는 제거하고 제한 helper도 no-op으로 둔다.
+
+
+def local_datetime(ts: Optional[float] = None) -> datetime:
+    if ts is None:
+        return datetime.now(LOCAL_TZ)
+    return datetime.fromtimestamp(ts, LOCAL_TZ)
+
+
+def local_timestamp(ts: Optional[float] = None) -> str:
+    return local_datetime(ts).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def local_run_id(ts: Optional[float] = None) -> str:
+    return local_datetime(ts).strftime("%Y%m%d_%H%M%S")
+
+
+def local_run_date(ts: Optional[float] = None) -> str:
+    return local_datetime(ts).strftime("%Y-%m-%d")
 
 
 
@@ -790,7 +811,7 @@ def save_failed_sources_yaml(
 
 def save_run_log(log: Dict[str, Any]) -> str:
     os.makedirs(RUN_LOG_DIR, exist_ok=True)
-    run_id = log.get("run_id") or time.strftime("%Y%m%d_%H%M%S")
+    run_id = log.get("run_id") or local_run_id()
     path = os.path.join(RUN_LOG_DIR, f"run_{run_id}.json")
     with open(path, "w", encoding="utf-8") as f:
         json.dump(log, f, ensure_ascii=False, indent=2)
@@ -802,6 +823,41 @@ def save_run_log(log: Dict[str, Any]) -> str:
         print(f"Supabase {SUPABASE_LATEST_RUN_LOG_KEY} 저장")
 
     return path
+
+
+def completed_run_log_for_date(run_date: str) -> Optional[Dict[str, Any]]:
+    latest = load_supabase_state(SUPABASE_LATEST_RUN_LOG_KEY)
+    if not isinstance(latest, dict):
+        return None
+    if latest.get("duplicate_skip"):
+        original_run_id = latest.get("duplicate_of_run_id")
+        if original_run_id:
+            original = load_supabase_state(f"{SUPABASE_RUN_LOG_PREFIX}_{original_run_id}")
+            if isinstance(original, dict):
+                latest = original
+        if latest.get("duplicate_skip"):
+            return None
+    if kst_date_from_run_log(latest) != run_date:
+        return None
+    if not latest.get("finished_at"):
+        return None
+    if latest.get("duration_seconds") is None:
+        return None
+    return latest
+
+
+def is_scheduled_run() -> bool:
+    if os.getenv("GITHUB_EVENT_NAME") == "schedule":
+        return True
+    return os.getenv("MONITOR_SCHEDULED_RUN", "").lower() in ("1", "true", "yes")
+
+
+def should_skip_duplicate_scheduled_run(run_date: str) -> Optional[Dict[str, Any]]:
+    if not is_scheduled_run():
+        return None
+    if os.getenv("FORCE_MONITOR_RUN", "").lower() in ("1", "true", "yes"):
+        return None
+    return completed_run_log_for_date(run_date)
 
 
 def normalize_date_parts(year: str, month: str, day: str) -> str:
@@ -2419,7 +2475,7 @@ def run_date_from_run_id(run_id: str) -> str:
     try:
         return datetime.strptime(run_id[:8], "%Y%m%d").strftime("%Y-%m-%d")
     except Exception:
-        return time.strftime("%Y-%m-%d")
+        return local_run_date()
 
 
 def parse_iso_date(value: str) -> Optional[datetime]:
@@ -2511,7 +2567,7 @@ def select_digest_clusters(
     """Select top digest topics, counting one clustered issue as one slot."""
     filtered = [x for x in analyzed if x.importance_score >= min_importance]
     topic_clusters = cluster_digest_topics(filtered)
-    run_date = run_date or time.strftime("%Y-%m-%d")
+    run_date = run_date or local_run_date()
     sent_index = {
         str(item.get("topic_key", "")): item
         for item in (sent_topics or [])
@@ -2882,7 +2938,7 @@ def publish_notion_analysis_page(
     pages[run_date] = {
         "page_id": page_id,
         "url": page_url,
-        "created_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "created_at": local_timestamp(),
         "item_count": len(sorted_items),
         "digest_count": len(selected_clusters),
     }
@@ -2916,7 +2972,7 @@ def kst_date_from_run_log(run_log: Dict[str, Any]) -> str:
     if len(run_id) >= 8 and run_id[:8].isdigit():
         return f"{run_id[:4]}-{run_id[4:6]}-{run_id[6:8]}"
     started_at = str(run_log.get("started_at") or "")
-    return started_at[:10] if len(started_at) >= 10 else time.strftime("%Y-%m-%d")
+    return started_at[:10] if len(started_at) >= 10 else local_run_date()
 
 
 def notion_dashboard_blocks(run_log: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -3012,7 +3068,7 @@ def publish_notion_dashboard_page(run_log: Dict[str, Any], cfg: Dict[str, Any]) 
     pages["admin_dashboard"] = {
         "page_id": page_id,
         "url": page_url,
-        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "updated_at": local_timestamp(),
         "run_id": run_log.get("run_id"),
     }
     save_notion_pages(pages)
@@ -3319,7 +3375,7 @@ def build_raw_review_messages(
     max_chars: int = 3500,
     source_check_records: Optional[List[Dict[str, Any]]] = None,
 ) -> List[str]:
-    generated_at = generated_at or time.strftime("%Y-%m-%d %H:%M")
+    generated_at = generated_at or local_datetime().strftime("%Y-%m-%d %H:%M")
     generated_date = generated_at.split()[0]
 
     region_counts: Dict[str, int] = {}
@@ -3458,7 +3514,7 @@ def send_telegram_messages(
 
 def main():
     run_started = time.time()
-    run_id = time.strftime("%Y%m%d_%H%M%S", time.localtime(run_started))
+    run_id = local_run_id(run_started)
     config_path = 'data/failed_sources.yaml' if '--failed-only' in sys.argv else 'config.yaml'
     failed_only = '--failed-only' in sys.argv
     skip_analysis = '--skip-analysis' in sys.argv
@@ -3486,7 +3542,7 @@ def main():
 
     run_log: Dict[str, Any] = {
         "run_id": run_id,
-        "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(run_started)),
+        "started_at": local_timestamp(run_started),
         "finished_at": None,
         "duration_seconds": None,
         "config_path": config_path,
@@ -3568,6 +3624,21 @@ def main():
         "analysis_prefilter_skips": [],
         "digest_recent_topic_skips": [],
     }
+
+    duplicate_run = should_skip_duplicate_scheduled_run(run_date_from_run_id(run_id))
+    if duplicate_run:
+        run_log["duplicate_skip"] = True
+        run_log["duplicate_of_run_id"] = duplicate_run.get("run_id")
+        run_log["finished_at"] = local_timestamp()
+        run_log["duration_seconds"] = round(time.time() - run_started, 3)
+        run_log["summary"]["duplicate_scheduled_run_skipped"] = True
+        print(
+            "오늘 이미 완료된 정규 실행이 있어 중복 실행을 건너뜁니다: "
+            f"{duplicate_run.get('run_id')}"
+        )
+        log_path = save_run_log(run_log)
+        print(f'[DEBUG] 실행 로그 저장: {log_path}')
+        return
 
     new_articles: List[Article] = []
     source_check_records: List[Dict[str, Any]] = []
@@ -3675,7 +3746,7 @@ def main():
     print(f'[DEBUG] 소스 점검 요약: ok={ok_count}, empty={empty_count}, fail={fail_count}')
     if not new_articles:
         print('신규 기사가 없습니다.')
-        run_log["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        run_log["finished_at"] = local_timestamp()
         run_log["duration_seconds"] = round(time.time() - run_started, 3)
         log_path = save_run_log(run_log)
         print(f'[DEBUG] 실행 로그 저장: {log_path}')
@@ -3713,7 +3784,7 @@ def main():
 
     if SKIP_ANALYSIS:
         print('[DEBUG] SKIP_ANALYSIS가 True이므로 Claude 분석을 건너뛰고 스크립트를 종료합니다.')
-        run_log["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        run_log["finished_at"] = local_timestamp()
         run_log["duration_seconds"] = round(time.time() - run_started, 3)
         log_path = save_run_log(run_log)
         print(f'[DEBUG] 실행 로그 저장: {log_path}')
@@ -3781,7 +3852,7 @@ def main():
 
     if not analyzed_items:
         print('새로 분석된 결과가 없습니다.')
-        run_log["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        run_log["finished_at"] = local_timestamp()
         run_log["duration_seconds"] = round(time.time() - run_started, 3)
         try:
             dashboard_url = publish_notion_dashboard_page(run_log, cfg)
@@ -3861,7 +3932,7 @@ def main():
     )
     save_sent_digest_topics(updated_sent_topics)
 
-    run_log["finished_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    run_log["finished_at"] = local_timestamp()
     run_log["duration_seconds"] = round(time.time() - run_started, 3)
     try:
         dashboard_url = publish_notion_dashboard_page(run_log, cfg)
