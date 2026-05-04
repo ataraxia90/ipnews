@@ -3000,7 +3000,7 @@ def notion_dashboard_blocks(run_log: Dict[str, Any]) -> List[Dict[str, Any]]:
         notion_heading(f"IP Monitor 운영 대시보드 - {run_date}"),
         notion_callout("관리자용 페이지입니다. 이 parent page를 외부 공개하지 않으면 관리자만 볼 수 있습니다."),
         notion_paragraph(f"실행: {run_log.get('run_id', '-')} | 시작: {run_log.get('started_at', '-')} | 종료: {run_log.get('finished_at', '-')}"),
-        notion_paragraph(f"Actions: {(run_log.get('github') or {}).get('run_url') or '-'}"),
+        notion_paragraph(f"실행 링크: {(run_log.get('github') or {}).get('run_url') or '-'}"),
         notion_divider(),
         notion_heading("기사"),
         notion_bullet(f"신규 기사: {summary.get('total_new_articles', 0)}"),
@@ -3017,6 +3017,8 @@ def notion_dashboard_blocks(run_log: Dict[str, Any]) -> List[Dict[str, Any]]:
         notion_bullet(f"추정 비용: ${float(summary.get('claude_estimated_cost_usd') or 0):.4f}"),
         notion_heading("링크"),
         notion_bullet(f"전체 분석결과: {notion_url or '-'}"),
+        notion_bullet(f"리뷰 텔레그램 원문 저장: {summary.get('raw_review_supabase_saved', False)}"),
+        notion_bullet(f"Digest 텔레그램 원문 저장: {summary.get('digest_supabase_saved', False)}"),
         notion_divider(),
     ]
 
@@ -3046,16 +3048,35 @@ def notion_dashboard_blocks(run_log: Dict[str, Any]) -> List[Dict[str, Any]]:
     return blocks
 
 
+def should_reuse_dashboard_page(dashboard_info: Dict[str, Any], parent_page_id: str) -> bool:
+    page_id = dashboard_info.get("page_id")
+    if not page_id:
+        return False
+    url = str(dashboard_info.get("url") or "")
+    title = str(dashboard_info.get("title") or "")
+    if "TEST-" in url or title.startswith("TEST-"):
+        return False
+    stored_parent = normalize_notion_page_id(dashboard_info.get("parent_page_id"))
+    if stored_parent and stored_parent != parent_page_id:
+        return False
+    return True
+
+
 def publish_notion_dashboard_page(run_log: Dict[str, Any], cfg: Dict[str, Any]) -> Optional[str]:
     if not notion_dashboard_enabled(cfg):
         return None
 
     notion_cfg = cfg.get("notion", {})
     title = str(notion_cfg.get("dashboard_title") or "IP Monitor 운영 대시보드")
+    parent_page_id = normalize_notion_page_id(os.getenv("NOTION_DASHBOARD_PARENT_PAGE_ID"))
     pages = load_notion_pages()
     dashboard_info = pages.get("admin_dashboard") if isinstance(pages.get("admin_dashboard"), dict) else {}
-    page_id = dashboard_info.get("page_id") or os.getenv("NOTION_DASHBOARD_PAGE_ID")
-    page_url = dashboard_info.get("url")
+    if should_reuse_dashboard_page(dashboard_info, parent_page_id):
+        page_id = dashboard_info.get("page_id")
+        page_url = dashboard_info.get("url")
+    else:
+        page_id = normalize_notion_page_id(os.getenv("NOTION_DASHBOARD_PAGE_ID"))
+        page_url = None
 
     if not page_id:
         response = create_notion_child_page(os.getenv("NOTION_DASHBOARD_PARENT_PAGE_ID", ""), title)
@@ -3070,6 +3091,8 @@ def publish_notion_dashboard_page(run_log: Dict[str, Any], cfg: Dict[str, Any]) 
     pages["admin_dashboard"] = {
         "page_id": page_id,
         "url": page_url,
+        "title": title,
+        "parent_page_id": parent_page_id,
         "updated_at": local_timestamp(),
         "run_id": run_log.get("run_id"),
     }
