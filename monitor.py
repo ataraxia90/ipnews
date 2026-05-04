@@ -951,6 +951,7 @@ def extract_date_from_context(node, url: str = "") -> Optional[str]:
 
 
 DETAIL_DATE_SOURCE_PATTERNS = [
+    "중국 상무부",
     "IPRdaily",
     "베트남 지식재산청",
 ]
@@ -981,8 +982,13 @@ def fetch_detail_date(source_name: str, url: str, timeout: int = 20) -> Optional
     for selector in [
         'meta[property="article:published_time"]',
         'meta[name="article:published_time"]',
+        'meta[name="firstpublishedtime"]',
+        'meta[name="lastmodifiedtime"]',
+        'meta[name="PubDate"]',
+        'meta[name="publishdate"]',
         'meta[property="og:updated_time"]',
         'time',
+        '.pages-date',
         '.date',
         '.post-date',
         '.entry-date',
