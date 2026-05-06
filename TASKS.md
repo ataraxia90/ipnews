@@ -1,5 +1,18 @@
 # IP Monitor 작업 리스트
 
+## 장기 과제
+
+- [ ] Review 신규 기사 날짜 정책 재검토
+  - 현재 `fetch.stale_article_days`는 14일 기준이라 3~5일 전 기사는 신규 URL이면 review에 포함된다.
+  - 수작업 검토 목적에 맞춰 당일/전일 중심으로 줄일지, 소스별로 다른 기준을 둘지 운영 데이터가 쌓인 뒤 결정한다.
+- [ ] RSS 소스의 HTML/API 대체 수집 방식 검토
+  - RSS는 최근 N개 항목을 한 번에 제공하는 경우가 많아, 며칠 전 기사도 신규 URL이면 review에 유입될 수 있다.
+  - IAM, mlex, EPO 등 RSS 후보 과다/며칠치 유입이 반복되는 소스부터 HTML 목록, 검색 API, 사이트맵, 공식 archive 페이지로 대체 가능한지 검토한다.
+  - 대체가 어려운 RSS는 소스별 `stale_article_days` 또는 review 표시 기준을 별도로 둔다.
+- [ ] 집계형 HTML 소스별 review cutoff 기준 검토
+  - Patent Salon처럼 최신 하루치가 아니라 며칠치 링크를 홈페이지에 계속 노출하는 소스는 전역 `fetch.stale_article_days` 14일 기준만으로는 4/28 같은 항목이 review에 포함된다.
+  - 소스별 `stale_article_days` 또는 `review_cutoff_days`를 별도로 설정해, 집계형 소스는 2~3일 기준으로 줄일지 운영정책으로 검토한다.
+
 ## Digest 품질 개선 1~6
 
 - [x] DG1. 같은 이슈 중복 클러스터링 강화

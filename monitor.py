@@ -132,6 +132,39 @@ def local_run_date(ts: Optional[float] = None) -> str:
     return local_datetime(ts).strftime("%Y-%m-%d")
 
 
+def normalize_published_value(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+
+    if isinstance(value, (int, float)) or re.fullmatch(r"\d{10,13}", str(value).strip()):
+        try:
+            raw_ts = float(value)
+            ts = raw_ts / 1000 if raw_ts >= 10_000_000_000 else raw_ts
+            return local_datetime(ts).strftime("%Y-%m-%d %H:%M:%S")
+        except (TypeError, ValueError, OSError, OverflowError):
+            return str(value).strip() or None
+
+    return str(value).strip() or None
+
+
+def canonical_article_url(url: str) -> str:
+    text = str(url or "").strip()
+    if not text:
+        return text
+
+    parsed = urlparse(text)
+    host = parsed.netloc.lower()
+    path = parsed.path or ""
+    if host.endswith("iam-media.com") and path.startswith("/index.php/"):
+        path = path.replace("/index.php/", "/", 1)
+        return parsed._replace(path=path).geturl()
+    return text
+
+
+def canonicalize_seen_urls(urls: Any) -> set:
+    return {canonical_article_url(url) for url in urls or [] if str(url or "").strip()}
+
+
 
 BAD_TITLE_PATTERNS = [
     # 공통 스킵/네비게이션
@@ -612,18 +645,18 @@ def load_seen() -> set:
     remote_seen = load_supabase_state(SUPABASE_SEEN_KEY)
     if isinstance(remote_seen, list):
         print(f"Supabase seen_urls 로드: {len(remote_seen)}개")
-        return set(remote_seen)
+        return canonicalize_seen_urls(remote_seen)
     if isinstance(remote_seen, dict) and isinstance(remote_seen.get("urls"), list):
         urls = remote_seen["urls"]
         print(f"Supabase seen_urls 로드: {len(urls)}개")
-        return set(urls)
+        return canonicalize_seen_urls(urls)
 
     if not os.path.exists(SEEN_PATH):
         return set()
     try:
         with open(SEEN_PATH, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        return set(data)
+        return canonicalize_seen_urls(data)
     except Exception:
         return set()
 
@@ -663,7 +696,7 @@ def load_results_index() -> Dict[str, Dict[str, Any]]:
     for item in items:
         url = item.get('url')
         if url:
-            out[url] = item
+            out[canonical_article_url(url)] = item
     return out
 
 
@@ -954,6 +987,8 @@ DETAIL_DATE_SOURCE_PATTERNS = [
     "중국 상무부",
     "IPRdaily",
     "베트남 지식재산청",
+    "중국 지식산권보",
+    "Thomson Reuters",
 ]
 
 
@@ -977,17 +1012,32 @@ def fetch_detail_date(source_name: str, url: str, timeout: int = 20) -> Optional
     except Exception:
         return None
 
-    soup = BeautifulSoup(decode_html_response(resp), 'html.parser')
+    raw_html = decode_html_response(resp)
+    labeled_date = re.search(
+        r'(?:发布时间|发布日期|发表时间|更新时间)[^0-9]{0,120}'
+        r'(20\d{2}[-/.年]\d{1,2}[-/.月]\d{1,2}(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?)',
+        raw_html,
+        re.I,
+    )
+    if labeled_date:
+        date = extract_date_from_text(labeled_date.group(1))
+        if date:
+            return date
+
+    soup = BeautifulSoup(raw_html, 'html.parser')
 
     for selector in [
         'meta[property="article:published_time"]',
         'meta[name="article:published_time"]',
+        'meta[name="article-published_time"]',
         'meta[name="firstpublishedtime"]',
         'meta[name="lastmodifiedtime"]',
         'meta[name="PubDate"]',
         'meta[name="publishdate"]',
         'meta[property="og:updated_time"]',
         'time',
+        '#time',
+        '.pub_date',
         '.pages-date',
         '.date',
         '.post-date',
@@ -1714,7 +1764,7 @@ def fetch_algolia_api(source: SourceConfig, timeout: int = 20) -> List[Article]:
         # 4. 요약문 (body/content/description 중 있는 것 선택)
         summary = item.get('content') or item.get('description') or item.get('excerpt') or item.get('summary') or ""
         clean_summary = BeautifulSoup(str(summary), 'html.parser').get_text(separator=' ', strip=True)
-        published = item.get('published') or item.get('date') or item.get('post_date')
+        published = normalize_published_value(item.get('published') or item.get('date') or item.get('post_date'))
 
         articles.append(Article(
             source=source.name,
@@ -2080,7 +2130,7 @@ class ClaudeClient:
 - 원문 요약/발췌(있으면): {art.summary_raw}
 
 요구 사항:
-1. 중요도 점수를 0~100 사이 정수로 매겨라. (높을수록 한국 정책 측면 중요)
+1. 중요도 점수를 0~100 사이 정수로 매겨라. (높을수록 한국 지식재산 정책 측면 중요)
 2. 아래 기준을 종합적으로 고려하라.
    - IP 법·제도·정책 변경 가능성
    - 국제 규범 변화(WIPO, WTO, FTA 등) 연관성
@@ -3751,6 +3801,8 @@ def main():
         }
         try:
             arts = fetch_articles_for_source(src, timeout=fetch_timeout)
+            for art in arts:
+                art.url = canonical_article_url(art.url)
             source_check_records.append(
                 build_source_check_record(src, arts)
             )
