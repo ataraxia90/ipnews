@@ -33,6 +33,12 @@ notion:
   dashboard_title: "IP Monitor 운영 대시보드"
   max_items: 80
 
+github_pages:
+  review_publish_enabled: true
+  repo: ataraxia90/ipnews
+  branch: main
+  base_url: "https://ataraxia90.github.io/ipnews"
+
 sources:
 
   # ============================================================

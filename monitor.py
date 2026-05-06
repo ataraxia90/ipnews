@@ -4,6 +4,7 @@ import json
 import time
 import re
 import html
+import base64
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
@@ -90,6 +91,8 @@ RAW_REVIEW_DIGEST_PATH = 'data/telegram_raw_review.txt'
 SOURCE_CHECK_REPORT_PATH = 'data/source_check_report.json'
 NOTION_PAGES_PATH = 'data/notion_pages.json'
 NOTION_VERSION = '2025-09-03'
+GITHUB_PAGES_DIR = 'docs'
+GITHUB_PAGES_REVIEW_DIR = f'{GITHUB_PAGES_DIR}/reviews'
 
 # Standard Claude Sonnet API pricing, USD per million tokens.
 # The current prompt does not use prompt caching, but cache fields are recorded
@@ -3319,10 +3322,6 @@ def build_raw_review_summary_lines(
         r for r in source_check_records
         if r.get("status") in ("fail", "empty")
     ]
-    high_count_sources = [
-        r for r in source_check_records
-        if int(r.get("count") or 0) >= 50
-    ]
     missing_date_articles = [
         a for a in articles
         if format_review_date(a.published, a.url, generated_at=generated_at) == "-"
@@ -3330,24 +3329,24 @@ def build_raw_review_summary_lines(
     title_attention_articles = [a for a in articles if review_title_needs_attention(a.title)]
 
     lines = [
-        "요약 리포트",
+        "수집 요약",
         "",
-        f"- 신규 기사: {len(articles)}개",
-        f"- 전체 fetch 후보: {fetch_candidate_count}개 / seen 제외 {seen_skipped_count}개 / 비기사 제외 {non_article_skipped_count}개 / 오래된 기사 제외 {stale_skipped_count}개",
-        f"- 소스 상태: 성공 {ok_sources}개 / 빈값 {empty_sources}개 / 실패 {failed_sources}개 / 전체 {total_sources}개",
-        f"- 날짜 누락 기사: {len(missing_date_articles)}개",
-        f"- 제목 잘림/깨짐 의심: {len(title_attention_articles)}개",
+        "소스 상태",
+        f"- 전체 {total_sources}개 / 성공 {ok_sources}개 / 결과 없음 {empty_sources}개 / 실패 {failed_sources}개",
+        "",
+        "기사 처리",
+        f"- 신규 기사 {len(articles)}개",
+        f"- 전체 수집 후보 {fetch_candidate_count}개",
+        f"- 기존 확인 기사 제외 {seen_skipped_count}개 / 비기사 제외 {non_article_skipped_count}개 / 오래된 기사 제외 {stale_skipped_count}개",
     ]
 
     attention_lines = []
     if problem_sources:
-        attention_lines.append(f"- 수집 실패/빈값 소스: {len(problem_sources)}개")
+        attention_lines.append(f"- 수집 실패/결과 없음 소스 {len(problem_sources)}개")
     if missing_date_articles:
-        attention_lines.append(f"- 날짜 누락 기사: {len(missing_date_articles)}개")
+        attention_lines.append(f"- 날짜 확인 필요 기사 {len(missing_date_articles)}개")
     if title_attention_articles:
-        attention_lines.append(f"- 제목 잘림/깨짐 의심: {len(title_attention_articles)}개")
-    if high_count_sources:
-        attention_lines.append(f"- 후보 과다 소스: {len(high_count_sources)}개")
+        attention_lines.append(f"- 제목 확인 필요 기사 {len(title_attention_articles)}개")
 
     lines.extend(["", "확인 필요"])
     if attention_lines:
@@ -3356,7 +3355,7 @@ def build_raw_review_summary_lines(
         lines.append("- 특이사항 없음")
 
     if problem_sources:
-        lines.extend(["", "수집 실패/빈값 소스"])
+        lines.extend(["", "수집 실패/결과 없음 소스"])
         for record in problem_sources[:10]:
             status = record.get("status", "-")
             name = record.get("name", "-")
@@ -3366,17 +3365,8 @@ def build_raw_review_summary_lines(
         if len(problem_sources) > 10:
             lines.append(f"- 외 {len(problem_sources) - 10}개")
 
-    if high_count_sources:
-        lines.extend(["", "후보 과다 소스"])
-        for record in high_count_sources[:10]:
-            name = record.get("name", "-")
-            count = record.get("count", 0)
-            lines.append(f"- {name}: {count}개")
-        if len(high_count_sources) > 10:
-            lines.append(f"- 외 {len(high_count_sources) - 10}개")
-
     if missing_date_articles:
-        lines.extend(["", "날짜 누락 샘플"])
+        lines.extend(["", "날짜 확인 필요 기사"])
         for art in missing_date_articles[:5]:
             title = normalize_review_title(art.title)
             if len(title) > 90:
@@ -3386,7 +3376,7 @@ def build_raw_review_summary_lines(
             lines.append(f"- 외 {len(missing_date_articles) - 5}개")
 
     if title_attention_articles:
-        lines.extend(["", "제목 확인 필요 샘플"])
+        lines.extend(["", "제목 확인 필요 기사"])
         for art in title_attention_articles[:5]:
             title = normalize_review_title(art.title)
             if len(title) > 90:
@@ -3550,6 +3540,180 @@ def save_raw_review_messages(messages: List[str], path: str = RAW_REVIEW_DIGEST_
         f.write("\n\n--- MESSAGE BREAK ---\n\n".join(messages))
 
 
+def github_pages_enabled(cfg: Dict[str, Any]) -> bool:
+    pages_cfg = cfg.get("github_pages", {})
+    return bool(pages_cfg.get("review_publish_enabled", False))
+
+
+def github_pages_base_url(cfg: Dict[str, Any]) -> str:
+    explicit = os.getenv("GITHUB_PAGES_BASE_URL") or str(cfg.get("github_pages", {}).get("base_url") or "")
+    if explicit:
+        return explicit.rstrip("/")
+
+    repo = (
+        os.getenv("GITHUB_PAGES_REPO")
+        or os.getenv("GITHUB_REPOSITORY")
+        or str(cfg.get("github_pages", {}).get("repo") or "")
+    )
+    if "/" not in repo:
+        return ""
+    owner, name = repo.split("/", 1)
+    return f"https://{owner}.github.io/{name}"
+
+
+def render_review_page_html(messages: List[str], run_date: str, run_id: str) -> str:
+    full_text = "\n\n--- MESSAGE BREAK ---\n\n".join(messages)
+    escaped = html.escape(full_text)
+    title = f"IP Monitor 수집 검증 목록 - {run_date}"
+    return f"""<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{html.escape(title)}</title>
+  <style>
+    :root {{ color-scheme: light; }}
+    body {{
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+      color: #17202a;
+      background: #f7f8fa;
+    }}
+    main {{
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 28px 18px 56px;
+    }}
+    h1 {{
+      margin: 0 0 6px;
+      font-size: 24px;
+      font-weight: 700;
+    }}
+    .meta {{
+      margin: 0 0 22px;
+      color: #5b6573;
+      font-size: 14px;
+    }}
+    pre {{
+      white-space: pre-wrap;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      margin: 0;
+      padding: 22px;
+      border: 1px solid #dde2e8;
+      border-radius: 8px;
+      background: #ffffff;
+      font-family: "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+      font-size: 14px;
+    }}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>{html.escape(title)}</h1>
+    <p class="meta">run_id: {html.escape(run_id)} · messages: {len(messages)}</p>
+    <pre>{escaped}</pre>
+  </main>
+</body>
+</html>
+"""
+
+
+def write_github_pages_review_files(messages: List[str], run_id: str) -> Dict[str, str]:
+    run_date = run_date_from_run_id(run_id)
+    html_text = render_review_page_html(messages, run_date, run_id)
+    review_dir = GITHUB_PAGES_REVIEW_DIR
+    os.makedirs(review_dir, exist_ok=True)
+
+    dated_rel = f"{review_dir}/{run_date}.html"
+    latest_rel = f"{review_dir}/latest.html"
+    index_rel = f"{GITHUB_PAGES_DIR}/index.html"
+
+    for path in (dated_rel, latest_rel):
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(html_text)
+
+    index_html = f"""<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>IP Monitor Review Archive</title>
+</head>
+<body>
+  <h1>IP Monitor Review Archive</h1>
+  <ul>
+    <li><a href="reviews/{run_date}.html">{run_date} 수집 검증 목록</a></li>
+    <li><a href="reviews/latest.html">Latest</a></li>
+  </ul>
+</body>
+</html>
+"""
+    os.makedirs(GITHUB_PAGES_DIR, exist_ok=True)
+    with open(index_rel, "w", encoding="utf-8") as f:
+        f.write(index_html)
+
+    return {
+        "dated_path": dated_rel,
+        "latest_path": latest_rel,
+        "index_path": index_rel,
+        "run_date": run_date,
+    }
+
+
+def github_api_put_file(repo: str, branch: str, path: str, content: str, message: str, token: str) -> None:
+    api_url = f"https://api.github.com/repos/{repo}/contents/{path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    params = {"ref": branch}
+    sha = None
+    get_resp = requests.get(api_url, headers=headers, params=params, timeout=30)
+    if get_resp.status_code == 200:
+        sha = get_resp.json().get("sha")
+    elif get_resp.status_code != 404:
+        get_resp.raise_for_status()
+
+    payload = {
+        "message": message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        "branch": branch,
+    }
+    if sha:
+        payload["sha"] = sha
+    put_resp = requests.put(api_url, headers=headers, json=payload, timeout=30)
+    put_resp.raise_for_status()
+
+
+def publish_github_pages_review(
+    messages: List[str],
+    run_id: str,
+    cfg: Dict[str, Any],
+) -> Optional[str]:
+    paths = write_github_pages_review_files(messages, run_id)
+    base_url = github_pages_base_url(cfg)
+    review_url = f"{base_url}/reviews/{paths['run_date']}.html" if base_url else ""
+
+    if not github_pages_enabled(cfg):
+        return None
+
+    token = os.getenv("GITHUB_PAGES_TOKEN") or os.getenv("GH_PAGES_TOKEN") or os.getenv("GITHUB_TOKEN")
+    repo = os.getenv("GITHUB_PAGES_REPO") or os.getenv("GITHUB_REPOSITORY") or ""
+    branch = os.getenv("GITHUB_PAGES_BRANCH") or str(cfg.get("github_pages", {}).get("branch") or "main")
+    if not token or "/" not in repo:
+        print("GitHub Pages 토큰 또는 repo 정보가 없어 로컬 HTML 생성만 완료했습니다.")
+        return None
+
+    commit_message = f"Publish review page {paths['run_date']}"
+    for path in (paths["dated_path"], paths["latest_path"], paths["index_path"]):
+        with open(path, "r", encoding="utf-8") as f:
+            github_api_put_file(repo, branch, path.replace("\\", "/"), f.read(), commit_message, token)
+    return review_url or None
+
+
 def save_telegram_messages_state(
     base_key: str,
     run_id: str,
@@ -3696,6 +3860,7 @@ def main():
         "paths": {
             "raw_articles": RAW_RESULTS_PATH,
             "raw_review_digest": RAW_REVIEW_DIGEST_PATH,
+            "github_pages_review_dir": GITHUB_PAGES_REVIEW_DIR,
             "source_check_report": SOURCE_CHECK_REPORT_PATH,
             "failed_sources": FAILED_SOURCES_PATH,
             "seen_urls": SEEN_PATH,
@@ -3736,6 +3901,8 @@ def main():
             "raw_review_digest_saved": False,
             "raw_review_telegram_messages": 0,
             "raw_review_supabase_saved": False,
+            "github_pages_review_saved": False,
+            "github_pages_review_url": None,
             "source_check_report_saved": False,
             "failed_sources_yaml_saved": False,
             "results_saved": False,
@@ -3920,6 +4087,15 @@ def main():
         source_check_records=source_check_records,
     )
     save_raw_review_messages(raw_review_messages, RAW_REVIEW_DIGEST_PATH)
+    try:
+        github_pages_review_url = publish_github_pages_review(raw_review_messages, run_id, cfg)
+        if github_pages_review_url:
+            run_log["summary"]["github_pages_review_saved"] = True
+            run_log["summary"]["github_pages_review_url"] = github_pages_review_url
+            print(f"GitHub Pages 수집 검증 페이지 생성: {github_pages_review_url}")
+    except Exception as e:
+        run_log["github_pages_review_error"] = str(e)
+        print(f"GitHub Pages 수집 검증 페이지 생성 실패: {e}")
     run_log["summary"]["raw_review_supabase_saved"] = save_telegram_messages_state(
         SUPABASE_RAW_REVIEW_MESSAGES_KEY,
         run_id,
