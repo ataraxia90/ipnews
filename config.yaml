@@ -28,16 +28,12 @@ telegram:
 
 notion:
   publish_enabled: true
+  review_publish_enabled: true
   dashboard_enabled: true
   page_title_prefix: "IP 동향 전체 분석결과"
+  review_page_title_prefix: "IP Monitor 수집 검증 목록"
   dashboard_title: "IP Monitor 운영 대시보드"
   max_items: 80
-
-github_pages:
-  review_publish_enabled: true
-  repo: ataraxia90/ipnews
-  branch: main
-  base_url: "https://ataraxia90.github.io/ipnews"
 
 sources:
 

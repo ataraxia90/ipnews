@@ -25,7 +25,9 @@ services:
         sync: false
       - key: NOTION_API_KEY
         sync: false
-      - key: NOTION_PARENT_PAGE_ID
+      - key: NOTION_DIGEST_PARENT_PAGE_ID
+        sync: false
+      - key: NOTION_REVIEW_PARENT_PAGE_ID
         sync: false
       - key: NOTION_DASHBOARD_PARENT_PAGE_ID
         sync: false
