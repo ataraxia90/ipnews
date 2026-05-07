@@ -2583,6 +2583,11 @@ def should_suppress_recent_digest_topic(
     run_date: str,
     recent_days: int
 ) -> bool:
+    # Duplicate suppression is intentionally disabled by current operating policy:
+    # send digest candidates regardless of whether the same issue was sent recently.
+    return False
+
+    # Previous policy kept for reference.
     if not sent_topic:
         return False
 
@@ -2621,32 +2626,12 @@ def select_digest_clusters(
     filtered = [x for x in analyzed if x.importance_score >= min_importance]
     topic_clusters = cluster_digest_topics(filtered)
     run_date = run_date or local_run_date()
-    sent_index = {
-        str(item.get("topic_key", "")): item
-        for item in (sent_topics or [])
-        if item.get("topic_key")
-    }
+    # Duplicate suppression via sent_digest_topics is disabled. Keep the
+    # parameters for compatibility, but do not use them to skip candidates.
 
     selected = []
     skipped = []
     for cluster in topic_clusters:
-        topic_key = digest_cluster_topic_key(cluster)
-        sent_topic = sent_index.get(topic_key) if topic_key else None
-        if topic_key and should_suppress_recent_digest_topic(
-            cluster,
-            sent_topic,
-            run_date,
-            recent_topic_days,
-        ):
-            skipped.append({
-                "topic_key": topic_key,
-                "topic_label": getattr(cluster.representative, "topic_label", ""),
-                "representative_title": cluster.representative.title,
-                "last_sent_date": sent_topic.get("last_sent_date") if sent_topic else "",
-                "score": digest_cluster_max_score(cluster),
-            })
-            continue
-
         selected.append(cluster)
         if len(selected) >= top_n:
             break
