@@ -2684,16 +2684,24 @@ def render_telegram_digest(
     full_results_url: Optional[str] = None,
 ) -> str:
     lines = []
-    date_part = f"{run_date} " if run_date else ""
+    if run_date:
+        parsed_date = parse_iso_date(run_date)
+        if parsed_date:
+            title_date = f"{parsed_date.year}년 {parsed_date.month}월 {parsed_date.day}일"
+        else:
+            title_date = run_date
+    else:
+        title_date = local_run_date()
+    lines.append(f"< {title_date} 글로벌 IP뉴스 속보 >")
+    lines.append("")
     lines.append(
         "※ 안내: 이 메시지는 AI가 공개 자료를 바탕으로 자동 생성한 참고용 요약입니다. "
-        "정확한 사실관계와 세부 내용은 반드시 원문 링크를 통해 확인해 주시기 바랍니다."
-        "메시지에는 중요도순으로 상위 5건의 내용만 제공됩니다."
+        "정확한 사실관계와 세부 내용은 반드시 원문 링크를 통해 확인해 주시기 바랍니다. "
+        "메시지에는 중요도순으로 상위 5건의 내용만 제공됩니다. "
         "전체 분석 결과는 아래 링크를 참조해 주시기 바랍니다."
 
     )
     lines.append("")
-    lines.append(f"IP 동향 Digest - {date_part}상위 {len(selected_clusters)}건")
     if full_results_url:
         lines.append(f"전체 분석결과: {full_results_url}")
     lines.append("")
@@ -2705,12 +2713,8 @@ def render_telegram_digest(
     for i, cluster in enumerate(selected_clusters, start=1):
         item = cluster.representative
         title = compact_digest_text(item.title, max_chars=120)
-        topic_label = getattr(item, "topic_label", "") or ""
         lines.append(f"{i}. {title}")
-        lines.append(f"- 점수: {item.importance_score} | {item.category} | {item.source}")
-        lines.append(f"- 지역: {digest_region_label(item)}")
-        if topic_label:
-            lines.append(f"- 이슈: {compact_digest_text(topic_label, max_chars=90)}")
+        lines.append(f"- {digest_region_label(item)} | {item.source} | {item.category}")
         if len(cluster.items) > 1:
             related = [
                 f"{x.source}({x.importance_score}점)"
