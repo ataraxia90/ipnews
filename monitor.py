@@ -2139,9 +2139,14 @@ class ClaudeClient:
    - AI, 데이터, 표준필수특허, 반도체, 디지털 저작권 등 전략 분야 관련성
    - 국내 제도 개선 논의, 정책에 활용 가능성
    - 시의성·긴급성
-3. 한국어로 2문장 요약을 작성하라. 요약에는 시사점이나 평가가 들어가지 않고, 링크에서 나타난 사실만을 넣는다.
+3. 한국어로 300자 이내 요약을 작성하라. 요약에는 시사점이나 평가가 들어가지 않고, 링크에서 나타난 사실만을 넣는다.
    - 원문에 한국, 대한민국, South Korea, Korea, KIPO 등 한국 관련 표현이 직접 등장하지 않으면 요약에 한국을 언급하지 마라.
    - 원문이 한국을 직접 언급하지 않는데 "한국도 평가 대상", "한국에 직접 영향", "한국이 지정될 경우"처럼 확정적·가정적 한국 중심 문장을 만들지 마라.
+   - digest_bullets는 위 300자 요약의 내용을 텔레그램용 하위 불릿으로 구체화한 것이다.
+   - digest_bullets는 최대 3개로 작성하고, 각 항목은 내용을 가장 잘 설명하는 카테고리 라벨로 시작한다.
+   - 카테고리 예: "배경: ...", "쟁점: ...", "문제점: ...", "향후일정: ...", "변경사항: ...", "결정: ...", "조치: ..."
+   - 카테고리는 서로 겹치지 않게 상호배타적으로 정한다. 범주화하기 어려운 내용은 억지로 항목을 만들지 말고 생략한다.
+   - digest_bullets에는 원문에 나타난 사실관계만 담고, 시사점, 평가, 전망, 한국 정책 참고사항은 넣지 마라.
 4. 1~2단어의 카테고리(예: 특허정책, 저작권, AI규제, 표준특허, 무역분쟁 등)를 정하라.
 5. issue_region을 작성하라.
    - issue_region은 출처 매체의 소재지가 아니라 기사에서 다루는 실제 정책·분쟁·시장 이슈의 대상 지역이다.
@@ -2154,7 +2159,7 @@ class ClaudeClient:
    - 같은 이슈를 다른 매체가 보도한 경우 동일한 topic_key가 나오도록 일반적이고 안정적인 이름을 사용한다.
 
 추가 규칙:
-- factual summary와 policy implication을 엄격히 분리하라. `summary_ko`에는 원문에 없는 한국 관련 추론을 넣지 말고, 필요한 경우 `key_points`에 간접 시사점으로만 작성하라.
+- factual summary와 policy implication을 엄격히 분리하라. `summary_ko`와 `digest_bullets`에는 원문에 나타난 사실관계만 넣고, 정책적 시사점·평가·추론은 작성하지 마라.
 - "한국도", "국내 제도", "한국 정책당국" 같은 표현은 원문 직접 언급이 없으면 `summary_ko`에서 금지한다.
 - 단순 기관 소개, 서비스 소개, 검색도구 안내, 데이터베이스 안내, 메뉴 페이지, 고정된 법령 원문 페이지(예: Title 17 전체 텍스트)는 정책 변경이 없다면 중요도를 0~20 사이로 낮게 평가하라.
 - 특허검색 서비스, 특허·저작권 등록부, 공보 시스템, 포털, 안내 페이지처럼 '운영 중인 툴/서비스' 중심인 문서는, 새로운 정책·제도 도입이나 변경 내용을 포함하지 않는 한 중요도를 0~20으로 제한하라.
@@ -2166,8 +2171,7 @@ JSON으로만 응답하라:
   "importance_score": 87,
   "category": "AI규제",
   "summary_ko": "…",
-  "key_points": ["…"],
-  "digest_bullets": ["발표: …", "쟁점: …", "참고: …"],
+  "digest_bullets": ["배경: …", "쟁점: …", "향후일정: …"],
   "topic_key": "uspto-ai-patent-examination",
   "topic_label": "USPTO AI Patent Examination",
   "issue_region": "미국"
@@ -2205,10 +2209,6 @@ JSON으로만 응답하라:
 
         category = str(data.get('category', '기타')).strip() or '기타'
         summary_ko = str(data.get('summary_ko', '')).strip()
-        key_points = data.get('key_points', [])
-        if not isinstance(key_points, list):
-            key_points = [str(key_points)]
-        key_points = [str(x).strip() for x in key_points if str(x).strip()]
         digest_bullets = data.get('digest_bullets', [])
         if not isinstance(digest_bullets, list):
             digest_bullets = [str(digest_bullets)]
@@ -2226,7 +2226,7 @@ JSON으로만 응답하라:
             summary_ko=summary_ko,
             importance_score=importance,
             category=category,
-            key_points=key_points,
+            key_points=[],
             raw_excerpt=art.summary_raw,
             topic_key=topic_key,
             topic_label=topic_label,
@@ -2375,7 +2375,6 @@ def digest_topic_text(item: AnalyzedArticle) -> str:
         item.title or "",
         item.category or "",
         item.summary_ko or "",
-        " ".join(item.key_points or []),
     ])
 
 
@@ -2564,7 +2563,7 @@ def digest_cluster_max_score(cluster: DigestTopicCluster) -> int:
 
 def has_substantial_update_signal(cluster: DigestTopicCluster) -> bool:
     text = normalize_topic_text(" ".join(
-        f"{item.title} {item.summary_ko} {' '.join(item.key_points or [])}"
+        f"{item.title} {item.summary_ko}"
         for item in cluster.items
     ))
     update_keywords = [
@@ -2725,10 +2724,6 @@ def render_telegram_digest(
                 lines.append(f"- {compact_digest_text(bullet, max_chars=180)}")
         elif item.summary_ko:
             lines.append(f"- 핵심: {compact_digest_text(item.summary_ko, max_chars=220)}")
-        if not digest_bullets and item.key_points:
-            key_point = compact_digest_key_point(item.key_points, max_chars=180)
-            if key_point:
-                lines.append(f"- 시사점: {key_point}")
         lines.append(f"- 링크: {item.url}")
         lines.append("")
 
@@ -2972,8 +2967,6 @@ def notion_item_blocks(item: AnalyzedArticle, sent_to_digest: bool, index: int) 
     digest_bullets = getattr(item, "digest_bullets", None) or []
     for bullet in digest_bullets[:4]:
         blocks.append(notion_bullet(bullet))
-    for point in (item.key_points or [])[:3]:
-        blocks.append(notion_bullet(f"시사점: {point}"))
     blocks.append(notion_bullet(f"원문: {item.url}"))
     blocks.append(notion_divider())
     return blocks
