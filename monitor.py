@@ -2131,6 +2131,7 @@ class ClaudeClient:
 
 요구 사항:
 1. 중요도 점수를 0~100 사이 정수로 매겨라. (높을수록 한국 지식재산 정책 측면 중요)
+   - '한국'이나 'South Korea' '삼성전자' 'samsung' 'sk'등 한국 기업을 직접 언급하고 있으면 중요도 점수를 상향하고, 요약에 해당 내용을 포함하라. 직접 언급이 없으면 한국 관련성만으로 과도하게 점수를 올리지 마라.
 2. 아래 기준을 종합적으로 고려하라.
    - IP 법·제도·정책 변경 가능성
    - 국제 규범 변화(WIPO, WTO, FTA 등) 연관성
@@ -2141,19 +2142,15 @@ class ClaudeClient:
    - 원문에 한국, 대한민국, South Korea, Korea, KIPO 등 한국 관련 표현이 직접 등장하지 않으면 요약에 한국을 언급하지 마라.
    - 원문이 한국을 직접 언급하지 않는데 "한국도 평가 대상", "한국에 직접 영향", "한국이 지정될 경우"처럼 확정적·가정적 한국 중심 문장을 만들지 마라.
 4. 1~2단어의 카테고리(예: 특허정책, 저작권, AI규제, 표준특허, 무역분쟁 등)를 정하라.
-5. 핵심 시사점 2문장을 작성하라.
-   - 원문에 한국이 직접 언급되지 않은 경우 시사점은 "한국에 대한 직접 영향"이 아니라 "한국 정책당국/기업이 참고할 만한 간접 동향" 수준으로 표현하라.
-   - 한국 관련성은 제도 비교, 통상 환경, 해외 진출 기업 리스크 등 간접적 의미로만 설명하라.
-7. '한국'이나 'South Korea' '삼성전자' 'samsung' 'sk'등 한국 기업을 직접 언급하고 있으면 중요도 점수를 상향하고, 요약에 해당 내용을 포함하라. 직접 언급이 없으면 한국 관련성만으로 과도하게 점수를 올리지 마라.
-8. 같은 사건·보고서·판례·법안·정책 발표·기업 발표를 묶을 수 있도록 topic_key와 topic_label을 작성하라.
-   - topic_key는 영문 소문자 slug로 작성한다. 예: "2026-ustr-special-301-report", "uspto-gen-ai-patent-examination"
-   - topic_label은 사람이 읽기 쉬운 짧은 이슈명으로 작성한다. 예: "USTR 2026 Special 301 Report"
-   - 같은 이슈를 다른 매체가 보도한 경우 동일한 topic_key가 나오도록 일반적이고 안정적인 이름을 사용한다.
-9. issue_region을 작성하라.
+5. issue_region을 작성하라.
    - issue_region은 출처 매체의 소재지가 아니라 기사에서 다루는 실제 정책·분쟁·시장 이슈의 대상 지역이다.
    - 예: 미국 매체가 EU의 IP 정책을 다루면 issue_region은 "유럽" 또는 "EU"로 작성한다.
    - 전세계 또는 다자기구 이슈면 "국제" 또는 "국제기구"로 작성한다.
    - 명확하지 않으면 기사 메타정보의 지역/국가 값을 사용한다.
+6. 같은 사건·보고서·판례·법안·정책 발표·기업 발표를 묶을 수 있도록 topic_key와 topic_label을 작성하라.
+   - topic_key는 영문 소문자 slug로 작성한다. 예: "2026-ustr-special-301-report", "uspto-gen-ai-patent-examination"
+   - topic_label은 사람이 읽기 쉬운 짧은 이슈명으로 작성한다. 예: "USTR 2026 Special 301 Report"
+   - 같은 이슈를 다른 매체가 보도한 경우 동일한 topic_key가 나오도록 일반적이고 안정적인 이름을 사용한다.
 
 추가 규칙:
 - factual summary와 policy implication을 엄격히 분리하라. `summary_ko`에는 원문에 없는 한국 관련 추론을 넣지 말고, 필요한 경우 `key_points`에 간접 시사점으로만 작성하라.
@@ -2688,6 +2685,11 @@ def render_telegram_digest(
 ) -> str:
     lines = []
     date_part = f"{run_date} " if run_date else ""
+    lines.append(
+        "※ 안내: 이 메시지는 AI가 공개 자료를 바탕으로 자동 생성한 참고용 요약입니다. "
+        "정확한 사실관계와 세부 내용은 반드시 원문 링크를 통해 확인해 주시기 바랍니다."
+    )
+    lines.append("")
     lines.append(f"IP 동향 Digest - {date_part}상위 {len(selected_clusters)}건")
     if full_results_url:
         lines.append(f"전체 분석결과: {full_results_url}")
