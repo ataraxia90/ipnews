@@ -3,7 +3,7 @@ services:
     name: ip-monitor-daily
     runtime: docker
     plan: starter
-    schedule: "0 0 * * *"
+    schedule: "0 0 * * 1-5"
     dockerfilePath: ./Dockerfile
     dockerCommand: "python monitor.py"
     envVars:
