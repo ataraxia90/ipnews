@@ -432,6 +432,15 @@ ANALYSIS_SKIP_PATTERNS = [
     r'招聘',
 ]
 
+ROUNDUP_ARTICLE_PATTERNS = [
+    r'\biam sunday digest\b',
+    r'\bsunday digest\b',
+    r'\bweekly digest\b',
+    r'\bweek(?:ly)? in review\b',
+    r'\bnews roundup\b',
+    r'\broundup\b',
+]
+
 BROAD_SEARCH_SOURCES = [
     'Bloomberg',
     'Thomson Reuters',
@@ -479,6 +488,15 @@ def has_analysis_keep_keyword(text: str) -> bool:
     return any(keyword.lower() in t for keyword in ANALYSIS_KEEP_KEYWORDS)
 
 
+def looks_like_roundup_article(text: str) -> bool:
+    normalized = _norm(html.unescape(text or ""))
+    slug_normalized = re.sub(r'[-_/]+', ' ', normalized)
+    return any(
+        re.search(pattern, normalized, re.I) or re.search(pattern, slug_normalized, re.I)
+        for pattern in ROUNDUP_ARTICLE_PATTERNS
+    )
+
+
 def should_skip_claude_analysis(art: Article) -> Optional[str]:
     content_text = " ".join([
         art.title or "",
@@ -487,6 +505,9 @@ def should_skip_claude_analysis(art: Article) -> Optional[str]:
     ])
     source_text = art.source or ""
     normalized = _norm(html.unescape(content_text))
+
+    if looks_like_roundup_article(content_text):
+        return "multi_item_roundup"
 
     if any(keyword in source_text for keyword in TRUSTED_ANALYSIS_SOURCE_KEYWORDS):
         return None
@@ -899,6 +920,15 @@ def normalize_date_parts(year: str, month: str, day: str) -> str:
     return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
 
 
+def safe_normalize_date_parts(year: str, month: str, day: str) -> Optional[str]:
+    try:
+        normalized = normalize_date_parts(year, month, day)
+        datetime.strptime(normalized, "%Y-%m-%d")
+        return normalized
+    except (TypeError, ValueError):
+        return None
+
+
 def extract_date_from_text(text: str) -> Optional[str]:
     if not text:
         return None
@@ -933,12 +963,14 @@ def extract_date_from_text(text: str) -> Optional[str]:
         parts = m.groupdict()
         month = parts.get("m") or month_names.get(parts.get("mon", "").lower())
         if month:
-            return normalize_date_parts(parts["y"], str(month), parts["d"])
+            date = safe_normalize_date_parts(parts["y"], str(month), parts["d"])
+            if date:
+                return date
 
     era = re.search(r'(?:令和|R)\s*(?P<y>\d{1,2})\s*[.年]\s*(?P<m>\d{1,2})\s*[.月]\s*(?P<d>\d{1,2})', normalized_text, re.I)
     if era:
         year = 2018 + int(era.group("y"))
-        return normalize_date_parts(str(year), era.group("m"), era.group("d"))
+        return safe_normalize_date_parts(str(year), era.group("m"), era.group("d"))
 
     return None
 
@@ -949,15 +981,15 @@ def extract_date_from_url(url: str) -> Optional[str]:
 
     m = re.search(r'/((20\d{2})/(\d{1,2})/(\d{1,2}))(?:/|$)', url)
     if m:
-        return normalize_date_parts(m.group(2), m.group(3), m.group(4))
+        return safe_normalize_date_parts(m.group(2), m.group(3), m.group(4))
 
     m = re.search(r'(20\d{2})(\d{2})(\d{2})(?=\.html?|[^\d]|$)', url)
     if m:
-        return normalize_date_parts(m.group(1), m.group(2), m.group(3))
+        return safe_normalize_date_parts(m.group(1), m.group(2), m.group(3))
 
     m = re.search(r'/((20\d{2}))/er(\d{2})(\d{2})_', url, re.I)
     if m:
-        return normalize_date_parts(m.group(2), m.group(3), m.group(4))
+        return safe_normalize_date_parts(m.group(2), m.group(3), m.group(4))
 
     return None
 
