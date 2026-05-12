@@ -2558,6 +2558,42 @@ def digest_source_label(source: str) -> str:
     return re.sub(r'\s*\([^)]*\)\s*$', '', source).strip() or source or "-"
 
 
+DIGEST_REGION_ICONS = {
+    "미국": "🇺🇸",
+    "중국": "🇨🇳",
+    "일본": "🇯🇵",
+    "한국": "🇰🇷",
+    "대한민국": "🇰🇷",
+    "영국": "🇬🇧",
+    "독일": "🇩🇪",
+    "프랑스": "🇫🇷",
+    "인도": "🇮🇳",
+    "호주": "🇦🇺",
+    "캐나다": "🇨🇦",
+    "브라질": "🇧🇷",
+    "말레이시아": "🇲🇾",
+    "베트남": "🇻🇳",
+    "태국": "🇹🇭",
+    "싱가포르": "🇸🇬",
+    "필리핀": "🇵🇭",
+    "인도네시아": "🇮🇩",
+    "유럽": "🇪🇺",
+    "EU": "🇪🇺",
+    "유럽연합": "🇪🇺",
+}
+
+
+def digest_region_icon(region_label: str) -> str:
+    region = re.sub(r'\s*\(출처지역:[^)]*\)\s*$', '', region_label or "").strip()
+    if not region or region == "-":
+        return "🌐"
+    if any(sep in region for sep in ("·", "/", ",")):
+        return "🌐"
+    if region in ("국제", "국제기구", "전세계", "글로벌"):
+        return "🌐"
+    return DIGEST_REGION_ICONS.get(region, "🌐")
+
+
 def run_date_from_run_id(run_id: str) -> str:
     try:
         return datetime.strptime(run_id[:8], "%Y%m%d").strftime("%Y-%m-%d")
@@ -2749,22 +2785,27 @@ def render_telegram_digest(
     for i, cluster in enumerate(selected_clusters, start=1):
         item = cluster.representative
         title = compact_digest_text(item.title, max_chars=120)
+        region_label = digest_region_label(item)
         lines.append(f"{i}. {title}")
-        lines.append(f"ㅇ {digest_region_label(item)} | {digest_source_label(item.source)} | {item.category}")
+        lines.append(f"{digest_region_icon(region_label)} {region_label} | 📰 {digest_source_label(item.source)} | 🏷 {item.category}")
+        lines.append("")
         if len(cluster.items) > 1:
             related = [
                 f"{digest_source_label(x.source)}({x.importance_score}점)"
                 for x in cluster.items[1:4]
             ]
             suffix = f": {', '.join(related)}" if related else ""
-            lines.append(f"- 관련: {len(cluster.items) - 1}건{suffix}")
+            lines.append(f"• 관련: {len(cluster.items) - 1}건{suffix}")
         digest_bullets = getattr(item, "digest_bullets", None) or []
         if item.summary_ko:
-            lines.append(f"ㅇ 요약: {compact_digest_text(item.summary_ko, max_chars=260)}")
+            lines.append("📝 요약")
+            lines.append(compact_digest_text(item.summary_ko, max_chars=300))
+            lines.append("")
         if digest_bullets:
             for bullet in digest_bullets[:3]:
-                lines.append(f"- {compact_digest_text(bullet, max_chars=180)}")
-        lines.append(f"ㅇ 링크: {item.url}")
+                lines.append(f"• {compact_digest_text(bullet, max_chars=180)}")
+            lines.append("")
+        lines.append(f"🔗 원문: {item.url}")
         lines.append("")
 
     return "\n".join(lines)
