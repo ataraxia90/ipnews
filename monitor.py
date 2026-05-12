@@ -2724,13 +2724,12 @@ def render_telegram_digest(
             title_date = run_date
     else:
         title_date = local_run_date()
-    lines.append(f"< {title_date} 글로벌 IP뉴스 속보 >")
+    lines.append(f"< {title_date} 데일리 IP 브리핑 >")
     lines.append("")
     lines.append(
         "※ 안내: 이 메시지는 AI가 공개 자료를 바탕으로 자동 생성한 참고용 요약입니다. "
         "정확한 사실관계와 세부 내용은 반드시 원문 링크를 통해 확인해 주시기 바랍니다. "
-        "메시지에는 중요도순으로 상위 5건의 내용만 제공됩니다. "
-        "전체 분석 결과는 아래 링크를 참조해 주시기 바랍니다."
+        "메시지에는 중요도순으로 상위 5건의 내용만 제공되며, 전체 분석 결과는 아래 링크를 참조해 주시기 바랍니다."
 
     )
     lines.append("")
