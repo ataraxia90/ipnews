@@ -2553,6 +2553,11 @@ def digest_region_label(item: AnalyzedArticle) -> str:
     return issue_region or source_region or "-"
 
 
+def digest_source_label(source: str) -> str:
+    source = re.sub(r'\s+', ' ', source or "").strip()
+    return re.sub(r'\s*\([^)]*\)\s*$', '', source).strip() or source or "-"
+
+
 def run_date_from_run_id(run_id: str) -> str:
     try:
         return datetime.strptime(run_id[:8], "%Y%m%d").strftime("%Y-%m-%d")
@@ -2745,21 +2750,21 @@ def render_telegram_digest(
         item = cluster.representative
         title = compact_digest_text(item.title, max_chars=120)
         lines.append(f"{i}. {title}")
-        lines.append(f"- {digest_region_label(item)} | {item.source} | {item.category}")
+        lines.append(f"ㅇ {digest_region_label(item)} | {digest_source_label(item.source)} | {item.category}")
         if len(cluster.items) > 1:
             related = [
-                f"{x.source}({x.importance_score}점)"
+                f"{digest_source_label(x.source)}({x.importance_score}점)"
                 for x in cluster.items[1:4]
             ]
             suffix = f": {', '.join(related)}" if related else ""
             lines.append(f"- 관련: {len(cluster.items) - 1}건{suffix}")
         digest_bullets = getattr(item, "digest_bullets", None) or []
+        if item.summary_ko:
+            lines.append(f"ㅇ 요약: {compact_digest_text(item.summary_ko, max_chars=260)}")
         if digest_bullets:
-            for bullet in digest_bullets[:4]:
+            for bullet in digest_bullets[:3]:
                 lines.append(f"- {compact_digest_text(bullet, max_chars=180)}")
-        elif item.summary_ko:
-            lines.append(f"- 핵심: {compact_digest_text(item.summary_ko, max_chars=220)}")
-        lines.append(f"- 링크: {item.url}")
+        lines.append(f"ㅇ 링크: {item.url}")
         lines.append("")
 
     return "\n".join(lines)
