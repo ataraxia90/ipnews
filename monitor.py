@@ -132,6 +132,22 @@ def local_run_date(ts: Optional[float] = None) -> str:
     return local_datetime(ts).strftime("%Y-%m-%d")
 
 
+def seconds_until_local_time(target_hhmm: str, now: Optional[datetime] = None) -> int:
+    m = re.match(r'^\s*(\d{1,2}):(\d{2})\s*$', target_hhmm or "")
+    if not m:
+        return 0
+    hour = int(m.group(1))
+    minute = int(m.group(2))
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return 0
+
+    now = now or local_datetime()
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if now >= target:
+        return 0
+    return max(0, int((target - now).total_seconds()))
+
+
 def normalize_published_value(value: Any) -> Optional[str]:
     if value is None:
         return None
@@ -3915,6 +3931,8 @@ def main():
             "raw_review_telegram_duration_seconds": None,
             "analysis_duration_seconds": None,
             "digest_telegram_duration_seconds": None,
+            "digest_telegram_wait_seconds": 0,
+            "digest_telegram_scheduled_send_time": "09:00",
             "digest_recent_topic_days": recent_topic_days,
             "digest_recent_topic_skipped_count": 0,
             "digest_selection_skipped_count": 0,
@@ -4299,6 +4317,16 @@ def main():
         digest_messages_for_state,
         "digest",
     )
+    digest_send_time = os.getenv("DIGEST_SEND_TIME_KST", "09:00")
+    run_log["summary"]["digest_telegram_scheduled_send_time"] = digest_send_time
+    digest_wait_seconds = 0
+    if is_scheduled_run() and cfg.get("telegram", {}).get("digest_send_enabled", False) and '--no-telegram' not in sys.argv:
+        digest_wait_seconds = seconds_until_local_time(digest_send_time)
+        if digest_wait_seconds > 0:
+            print(f"Digest 텔레그램 발송 예정 시각({digest_send_time} KST)까지 {digest_wait_seconds}초 대기합니다.")
+            time.sleep(digest_wait_seconds)
+    run_log["summary"]["digest_telegram_wait_seconds"] = digest_wait_seconds
+
     digest_telegram_started = time.time()
     digest_telegram_messages = send_telegram_messages(
         digest_text,
