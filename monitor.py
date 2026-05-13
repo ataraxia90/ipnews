@@ -2302,6 +2302,11 @@ MEDIA_SOURCE_KEYWORDS = [
     "bloomberg", "nikkei", "요미우리", "닛케이", "reuters",
 ]
 
+PAID_DIGEST_SOURCE_KEYWORDS = [
+    "mlex",
+    "iam",
+]
+
 OFFICIAL_DOMAIN_HINTS = [
     ".gov", ".go.", ".gouv", ".gc.ca", ".gov.uk", ".europa.eu",
     "wipo.int", "wto.org", "oecd.org", "epo.org", "euipo.europa.eu",
@@ -2350,6 +2355,12 @@ def digest_source_authority_score(item: AnalyzedArticle) -> int:
     return 2
 
 
+def is_paid_digest_source(source: str, url: str = "") -> bool:
+    source_text = normalize_topic_text(source or "")
+    domain = urlparse(url or "").netloc.lower()
+    return any(keyword in source_text or keyword in domain for keyword in PAID_DIGEST_SOURCE_KEYWORDS)
+
+
 def digest_direct_report_score(item: AnalyzedArticle) -> int:
     title = normalize_topic_text(item.title or "")
     source = normalize_topic_text(item.source or "")
@@ -2388,6 +2399,7 @@ def choose_digest_representative(items: List[AnalyzedArticle]) -> AnalyzedArticl
     return max(
         items,
         key=lambda item: (
+            not is_paid_digest_source(item.source, item.url),
             digest_source_authority_score(item),
             digest_direct_report_score(item),
             item.importance_score,
@@ -2692,6 +2704,7 @@ def select_digest_clusters(
     sent_topics: Optional[List[Dict[str, Any]]] = None,
     recent_topic_days: int = 3,
     run_date: Optional[str] = None,
+    max_paid_sources: int = 1,
 ) -> tuple:
     """Select top digest topics, counting one clustered issue as one slot."""
     filtered = [x for x in analyzed if x.importance_score >= min_importance]
@@ -2702,8 +2715,20 @@ def select_digest_clusters(
 
     selected = []
     skipped = []
+    paid_count = 0
     for cluster in topic_clusters:
+        is_paid = is_paid_digest_source(cluster.representative.source, cluster.representative.url)
+        if is_paid and paid_count >= max_paid_sources:
+            skipped.append({
+                "topic_key": digest_cluster_topic_key(cluster),
+                "title": cluster.representative.title,
+                "source": cluster.representative.source,
+                "reason": "paid_source_limit",
+            })
+            continue
         selected.append(cluster)
+        if is_paid:
+            paid_count += 1
         if len(selected) >= top_n:
             break
 
@@ -2788,7 +2813,10 @@ def render_telegram_digest(
         title = compact_digest_text(item.title, max_chars=120)
         region_label = digest_region_label(item)
         lines.append(f"{i}. {title}")
-        lines.append(f"{digest_region_icon(region_label)} {region_label} | 📰 {digest_source_label(item.source)} | 🏷 {item.category}")
+        source_label = digest_source_label(item.source)
+        if is_paid_digest_source(item.source, item.url):
+            source_label = f"{source_label} 🔒"
+        lines.append(f"{digest_region_icon(region_label)} {region_label} | 📰 {source_label} | 🏷 {item.category}")
         lines.append("")
         if len(cluster.items) > 1:
             related = [
@@ -2806,7 +2834,8 @@ def render_telegram_digest(
             for bullet in digest_bullets[:3]:
                 lines.append(f"• {compact_digest_text(bullet, max_chars=180)}")
             lines.append("")
-        lines.append(f"🔗 원문: {item.url}")
+        link_label = "원문(구독 필요)" if is_paid_digest_source(item.source, item.url) else "원문"
+        lines.append(f"🔗 {link_label}: {item.url}")
         lines.append("")
 
     return "\n".join(lines)
@@ -3888,6 +3917,8 @@ def main():
             "digest_telegram_duration_seconds": None,
             "digest_recent_topic_days": recent_topic_days,
             "digest_recent_topic_skipped_count": 0,
+            "digest_selection_skipped_count": 0,
+            "digest_paid_source_skipped_count": 0,
             "seen_skipped_count": 0,
             "already_analyzed_skipped_count": 0,
             "non_article_skipped_count": 0,
@@ -3933,6 +3964,7 @@ def main():
         "analysis_prefilter_skips": [],
         "stale_article_skips": [],
         "digest_recent_topic_skips": [],
+        "digest_selection_skips": [],
     }
 
     duplicate_run = should_skip_duplicate_scheduled_run(run_date_from_run_id(run_id))
@@ -4223,7 +4255,7 @@ def main():
 
     sent_digest_topics = load_sent_digest_topics()
     digest_run_date = run_date_from_run_id(run_id)
-    selected_digest_clusters, recent_topic_skips = select_digest_clusters(
+    selected_digest_clusters, digest_selection_skips = select_digest_clusters(
         analyzed_items,
         top_n=top_n,
         min_importance=min_importance,
@@ -4231,8 +4263,11 @@ def main():
         recent_topic_days=recent_topic_days,
         run_date=digest_run_date,
     )
-    run_log["summary"]["digest_recent_topic_skipped_count"] = len(recent_topic_skips)
-    run_log["digest_recent_topic_skips"] = recent_topic_skips[:100]
+    run_log["summary"]["digest_selection_skipped_count"] = len(digest_selection_skips)
+    run_log["summary"]["digest_paid_source_skipped_count"] = sum(
+        1 for item in digest_selection_skips if item.get("reason") == "paid_source_limit"
+    )
+    run_log["digest_selection_skips"] = digest_selection_skips[:100]
 
     notion_page_url = None
     try:
