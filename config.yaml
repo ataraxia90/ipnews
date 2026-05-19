@@ -49,6 +49,25 @@ sources:
     enabled: true
     priority: 1
 
+  - name: 미국 특허상표청(USPTO Subscription Center)
+    region: 미국
+    homepage: https://www.uspto.gov/
+    monitor_url: https://www.uspto.gov/about-us/subscription-center
+    mode: playwright
+    enabled: true
+    priority: 1
+    row_selector: 'table tbody tr'
+    title_selector: 'a.bulletin-url[href]'
+    date_selector: 'td:nth-of-type(2) span'
+
+  - name: 미국 특허상표청(USPTO GovDelivery)
+    region: 미국
+    homepage: https://content.govdelivery.com/accounts/USPTO/
+    monitor_url: https://www.naipo.com/ipinfo.aspx?strEnc=en-US&tid=IPNews
+    mode: html_list
+    enabled: true
+    priority: 1
+    list_selector: 'main a[href], a[href*="content.govdelivery.com/accounts/USPTO/bulletins/"]'
 
   - name: 미국 무역대표부
     region: 미국
@@ -484,12 +503,11 @@ sources:
   - name: IPRdaily
     region: 중국
     homepage: https://www.iprdaily.cn/
-    monitor_url: https://www.iprdaily.cn/
-    mode: html_list
+    monitor_url: https://www.iprdaily.cn/index.php?s=api&c=api&m=template&name=get_news.html
+    mode: iprdaily_api
     enabled: true
     priority: 2
-    # 'news_' 또는 'article_' 로 시작하는 링크를 잡습니다.
-    list_selector: "a[href*='news_'], a[href*='article_']"
+    # IPRdaily 홈의 정적 HTML은 일부 추천 기사만 노출하므로 get_news API를 직접 호출합니다.
 
   - name: 중국 지식산권망
     region: 중국
@@ -921,6 +939,18 @@ sources:
     mode: rss
     enabled: true
     priority: 2
+
+  - name: WIPO Patent Analytics
+    region: 국제기구
+    homepage: https://www.wipo.int
+    monitor_url: https://www.wipo.int/en/web/patent-analytics/news
+    mode: html_list
+    enabled: true
+    priority: 3
+    row_selector: 'li:has(a[href*="patent-analytics/w/news"])'
+    title_selector: 'a[href*="patent-analytics/w/news"]'
+    date_selector: ''
+    list_selector: 'a[href*="patent-analytics/w/news"]'
 
   - name: WIPO 출판물
     region: 국제기구

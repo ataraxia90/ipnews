@@ -198,6 +198,11 @@ BAD_TITLE_PATTERNS = [
     r'^français$',
     r'^español$',
     r'^privacy policy$',
+    r'^terms (of use|and conditions)$',
+    r'^terms$',
+    r'^product specific terms$',
+    r'^cookie (notice|policy|settings)$',
+    r'^glossary$',
     r'^contact us$',
     r'^contact$',
     r'^about us$',
@@ -209,6 +214,7 @@ BAD_TITLE_PATTERNS = [
     r'^log in$',
     r'^sign in$',
     r'^subscribe to\b',
+    r'^subscribe$',
 
     # WTO / 국제기구 계열에서 자주 나오는 허브성 제목
     r'^news & events$',
@@ -279,6 +285,12 @@ BAD_URL_PATTERNS = [
     r'/sitemap/?$',
     r'/site-map/?$',
     r'/privacy/?$',
+    r'/privacy-policy/?$',
+    r'/terms(?:-of-use|-and-conditions)?/?$',
+    r'/terms-of-service/?$',
+    r'/product-specific-terms/?$',
+    r'/cookie-(?:notice|policy|settings)/?$',
+    r'/glossary/?$',
     r'/accessibility/?$',
     r'/subscribe/?$',
 
@@ -325,6 +337,10 @@ ALLOW_URL_PATTERNS_BY_SOURCE = {
     '미국 특허상표청(USPTO)': [
         r'/about-us/news-updates/',
         r'/news-updates/',
+    ],
+    '미국 특허상표청(USPTO GovDelivery)': [
+        r'^https://content\.govdelivery\.com/accounts/USPTO/bulletins/[a-z0-9]+',
+        r'^https://www\.uspto\.gov/subscription-center/\d{4}/',
     ],
     '미국 저작권청': [
         r'/newsnet/\d{4}/\d+\.html$',
@@ -383,6 +399,17 @@ ALLOW_URL_PATTERNS_BY_SOURCE = {
     ]
 }
 
+ALLOW_URL_PATTERNS_BY_SOURCE_MARKER = {
+    'Thomson Reuters': [
+        r'^https://www\.thomsonreuters\.com/en-us/posts/',
+        r'^https://legal\.thomsonreuters\.com/blog/',
+    ],
+    'Bloomberg': [
+        r'^https://www\.bloomberg\.com/news/articles/\d{4}-\d{2}-\d{2}/',
+        r'^https://www\.bloomberg\.com/opinion/articles/\d{4}-\d{2}-\d{2}/',
+    ],
+}
+
 NEWS_HINTS = [
     # precision 위주로 좁힘
     '/news',
@@ -397,7 +424,8 @@ NEWS_HINTS = [
 
 IP_KEYWORDS = [
     'ip', 'patent', 'copyright', 'trademark', 'licensing', 'innovation', 'design',
-    'intellectual property',
+    'intellectual property', 'trade secret', 'frand', 'standard essential', 'sep',
+    'counterfeit', 'piracy', 'infringement',
     '지식', '특허', '저작권', '상표', '라이선스',
     # 일본어
     '特許',      # 특허
@@ -408,7 +436,45 @@ IP_KEYWORDS = [
     '知財',      # 지재 (지식재산)
     '出願',      # 출원
     'ハーグ',    # 헤이그 (디자인 국제출원)
-    'マドリッド' # 마드리드 (상표 국제출원)
+    'マドリッド', # 마드리드 (상표 국제출원)
+    # 중국어
+    '知识产权',   # 지식재산권
+    '专利',       # 특허
+    '商标',       # 상표
+    '版权',       # 판권/저작권
+    '著作权',     # 저작권
+    '侵权',       # 침해
+    '商业秘密',   # 영업비밀
+]
+
+COLLECTION_IP_KEYWORD_FILTER_SOURCES = [
+    '백악관',
+    '연방거래위원회',
+    'FTC',
+    '국제무역위원회',
+    'ITC',
+    '상무부(新闻发布',
+    '상무부(时政要闻',
+    '시장감독관리총국(总局',
+    '최고인민검찰원(最高检新闻',
+    '최고인민검찰원(重点推荐',
+    '최고인민법원(最高人民法院新闻',
+    '일본 후생노동성',
+    '일본 총무성',
+    '유럽연합 집행위원회',
+]
+DETAIL_COLLECTION_IP_KEYWORD_FILTER_SOURCES = [
+    '백악관',
+    '연방거래위원회',
+    'FTC',
+    '국제무역위원회',
+    'ITC',
+]
+DETAIL_KEYWORD_TEXT_CACHE: Dict[str, str] = {}
+COLLECTION_SKIP_TITLE_PATTERNS = [
+    r'招聘',
+    r'聘用制',
+    r'招考',
 ]
 
 ANALYSIS_KEEP_KEYWORDS = [
@@ -553,8 +619,87 @@ def looks_like_article_url(href: str) -> bool:
     return False
 
 
+def source_requires_collection_ip_keyword_filter(source_name: str) -> bool:
+    return any(marker in (source_name or "") for marker in COLLECTION_IP_KEYWORD_FILTER_SOURCES)
+
+
+def source_allows_detail_collection_ip_keyword_filter(source_name: str) -> bool:
+    return any(marker in (source_name or "") for marker in DETAIL_COLLECTION_IP_KEYWORD_FILTER_SOURCES)
+
+
+def collection_keyword_matches(text: str) -> bool:
+    normalized = _norm(html.unescape(text or ""))
+    if not normalized:
+        return False
+
+    for keyword in IP_KEYWORDS:
+        k = keyword.lower()
+        if re.fullmatch(r"[a-z0-9]{1,3}", k):
+            if re.search(rf"\b{re.escape(k)}\b", normalized):
+                return True
+        elif k in normalized:
+            return True
+    return False
+
+
+def collection_title_should_skip(title: str) -> bool:
+    normalized = _norm(html.unescape(title or ""))
+    return any(re.search(pattern, normalized, re.I) for pattern in COLLECTION_SKIP_TITLE_PATTERNS)
+
+
+def fetch_detail_text_for_keyword_filter(url: str, timeout: int = 20) -> str:
+    if not url or not re.match(r"^https?://", url):
+        return ""
+    if url in DETAIL_KEYWORD_TEXT_CACHE:
+        return DETAIL_KEYWORD_TEXT_CACHE[url]
+
+    try:
+        resp = curl_requests.get(
+            url,
+            impersonate="chrome120",
+            timeout=timeout,
+            verify=False,
+        )
+        if not resp.ok:
+            DETAIL_KEYWORD_TEXT_CACHE[url] = ""
+            return ""
+    except Exception:
+        DETAIL_KEYWORD_TEXT_CACHE[url] = ""
+        return ""
+
+    raw_html = decode_html_response(resp)
+    soup = BeautifulSoup(raw_html, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+    text = soup.get_text(" ", strip=True)
+    DETAIL_KEYWORD_TEXT_CACHE[url] = text[:20000]
+    return DETAIL_KEYWORD_TEXT_CACHE[url]
+
+
+def passes_collection_ip_keyword_filter(
+    source_name: str,
+    title: str,
+    url: str = "",
+    summary: str = "",
+    fetch_detail: bool = False,
+    timeout: int = 20,
+) -> bool:
+    if not source_requires_collection_ip_keyword_filter(source_name):
+        return True
+    if collection_title_should_skip(title):
+        return False
+    if collection_keyword_matches(" ".join([title or "", url or "", summary or ""])):
+        return True
+    if fetch_detail and source_allows_detail_collection_ip_keyword_filter(source_name):
+        return collection_keyword_matches(fetch_detail_text_for_keyword_filter(url, timeout=timeout))
+    return False
+
+
 def passes_source_allowlist(source_name: str, url: str) -> bool:
-    patterns = ALLOW_URL_PATTERNS_BY_SOURCE.get(source_name, [])
+    patterns = list(ALLOW_URL_PATTERNS_BY_SOURCE.get(source_name, []))
+    for marker, marker_patterns in ALLOW_URL_PATTERNS_BY_SOURCE_MARKER.items():
+        if marker in (source_name or ""):
+            patterns.extend(marker_patterns)
     if not patterns:
         return True
     return any(re.search(p, url, re.I) for p in patterns)
@@ -1238,6 +1383,8 @@ def fetch_playwright(source: SourceConfig, timeout: int = 30000) -> List[Article
                 continue
             if not passes_source_allowlist(source.name, full_url):
                 continue
+            if not passes_collection_ip_keyword_filter(source.name, title, full_url, fetch_detail=True):
+                continue
             if full_url in seen_url:
                 continue
 
@@ -1264,6 +1411,8 @@ def fetch_playwright(source: SourceConfig, timeout: int = 30000) -> List[Article
 
         if items:
             return items
+        if rows and source_requires_collection_ip_keyword_filter(source.name):
+            return []
 
     # 여기서부터 아까 만든 '완벽 로직'을 Playwright에도 동일하게 이식합니다!
     candidate_tags = soup.select(source.list_selector) if source.list_selector else []
@@ -1314,6 +1463,9 @@ def fetch_playwright(source: SourceConfig, timeout: int = 30000) -> List[Article
             if not passes_source_allowlist(source.name, full_url):
                 print(f"[DEBUG] ❌ 탈락 (URL 정규식 불일치) | {full_url}")
                 continue
+            if not passes_collection_ip_keyword_filter(source.name, text, full_url, fetch_detail=True):
+                print(f"[DEBUG] ❌ 탈락 (IP 키워드 없음) | {text[:20]}... | {full_url}")
+                continue
 
             # 모든 관문을 통과한 진짜 합격 기사!
             links.append((text, full_url))
@@ -1353,6 +1505,8 @@ def fetch_rss(source: SourceConfig, timeout: int = 20) -> List[Article]:
         )
 
         if not title or not link:
+            continue
+        if not passes_collection_ip_keyword_filter(source.name, title, link, summary):
             continue
 
         articles.append(Article(
@@ -1606,6 +1760,8 @@ def fetch_html_list(source: SourceConfig, timeout: int = 20) -> List[Article]:
 
             if not passes_source_allowlist(source.name, full_url):
                 continue
+            if not passes_collection_ip_keyword_filter(source.name, title, full_url, fetch_detail=True, timeout=timeout):
+                continue
 
             published = None
             if getattr(source, "date_selector", ""):
@@ -1644,6 +1800,8 @@ def fetch_html_list(source: SourceConfig, timeout: int = 20) -> List[Article]:
 
         if articles:
             return articles
+        if rows and source_requires_collection_ip_keyword_filter(source.name):
+            return []
 
     # 1) selector 우선 수집 (config.yaml의 list_selector 최우선 적용)
     selectors = []
@@ -1714,6 +1872,8 @@ def fetch_html_list(source: SourceConfig, timeout: int = 20) -> List[Article]:
 
         if score >= 2:
             if not passes_source_allowlist(source.name, full_url):
+                continue
+            if not passes_collection_ip_keyword_filter(source.name, text, full_url, fetch_detail=True, timeout=timeout):
                 continue
             published = extract_date_from_context(a, full_url)
             links.append((text, full_url, published))
@@ -1881,6 +2041,106 @@ def fetch_json_api(source: SourceConfig, timeout: int = 20) -> List[Article]:
         ))
 
     print(f"[DEBUG] {source.name} JSON에서 {len(articles)}개 기사 파싱 성공")
+    return articles
+
+
+def fetch_iprdaily_api(source: SourceConfig, timeout: int = 20) -> List[Article]:
+    print(f"[DEBUG] {source.name} 수집 시작 (IPRdaily API 모드)")
+    articles: List[Article] = []
+    seen_url = set()
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 IP-Monitor-MVP',
+        'Referer': source.homepage,
+        'X-Requested-With': 'XMLHttpRequest',
+    }
+
+    for page in range(1, 6):
+        try:
+            resp = curl_requests.get(
+                source.monitor_url,
+                params={"page": page},
+                headers=headers,
+                impersonate="chrome120",
+                timeout=timeout,
+                verify=False,
+            )
+            print(f"[DEBUG] {source.name} API page={page} HTTP 상태 코드: {resp.status_code}")
+            if not resp.ok:
+                continue
+            data = resp.json()
+        except Exception as e:
+            print(f"[DEBUG] {source.name} API page={page} 로드 실패: {e}")
+            continue
+
+        html_fragment = str(data.get("msg") or "")
+        if not html_fragment.strip():
+            continue
+
+        soup = BeautifulSoup(html_fragment, "html.parser")
+        rows = soup.select("li.box-list")
+        print(f"[DEBUG] {source.name} API page={page} row 후보 개수: {len(rows)}")
+        if not rows:
+            continue
+
+        for row in rows:
+            title_el = row.select_one("dl.article dt.title")
+            link_el = row.select_one("dl.article > a[href]") or row.select_one("a[href*='news_'], a[href*='article_']")
+            if not link_el:
+                continue
+
+            title = (title_el.get_text(" ", strip=True) if title_el else "").strip()
+            if not title:
+                img = row.select_one("img[alt], img[title]")
+                title = (
+                    (img.get("alt") if img else "")
+                    or (img.get("title") if img else "")
+                    or link_el.get_text(" ", strip=True)
+                    or ""
+                ).strip()
+
+            href = (link_el.get("href") or "").strip()
+            if not title or not href:
+                continue
+
+            full_url = urljoin(source.homepage, href)
+            if looks_like_non_article(title, full_url):
+                continue
+            if not passes_source_allowlist(source.name, full_url):
+                continue
+            if full_url in seen_url:
+                continue
+
+            summary = ""
+            summary_el = row.select_one("dl.article dd.box-con")
+            if summary_el:
+                summary = summary_el.get_text(" ", strip=True)
+
+            category = ""
+            category_el = row.select_one(".l_bie")
+            if category_el:
+                category = category_el.get_text(" ", strip=True)
+            if category:
+                summary = f"{summary} [{category}]".strip()
+
+            published = None
+            date_el = row.select_one("dd.time")
+            if date_el:
+                published = extract_date_from_text(date_el.get_text(" ", strip=True))
+            if not published:
+                published = extract_date_from_context(row, full_url)
+
+            seen_url.add(full_url)
+            articles.append(Article(
+                source=source.name,
+                region=source.region,
+                title=title,
+                url=full_url,
+                summary_raw=summary,
+                published=published,
+            ))
+
+    print(f"[DEBUG] {source.name} API에서 {len(articles)}개 기사 파싱 성공")
     return articles
 
 
@@ -2128,6 +2388,8 @@ def fetch_articles_for_source(source: SourceConfig, timeout: int = 20) -> List[A
         return fetch_html_list(source, timeout=timeout)
     if source.mode == 'json_api':                 # <--- 이 두 줄을
         return fetch_json_api(source, timeout)    # <--- 추가해 줍니다.
+    if source.mode == 'iprdaily_api':
+        return fetch_iprdaily_api(source, timeout)
     if source.mode == 'oecd_search_api':
         return fetch_oecd_search_api(source, timeout)
     if source.mode == 'sxa_search':
@@ -3802,6 +4064,56 @@ def save_telegram_messages_state(
     return saved
 
 
+def decode_stored_telegram_message(message: str) -> str:
+    # Older digest payloads were accidentally stored with a newline between
+    # every character. Collapse those separator newlines while keeping real
+    # paragraph breaks readable.
+    if not message:
+        return ""
+    single_newline_ratio = message.count("\n") / max(len(message), 1)
+    if single_newline_ratio < 0.35:
+        return message
+    return re.sub(
+        r"\n+",
+        lambda m: "\n" * (len(m.group(0)) // 2),
+        message,
+    )
+
+
+def load_telegram_messages_state(base_key: str, run_date: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    date_text = run_date or local_run_date()
+    key_date = date_text.replace("-", "")
+    key = f"{base_key}_{key_date}"
+    payload = load_supabase_state(key)
+    if not isinstance(payload, dict):
+        return None
+
+    messages = payload.get("messages")
+    if isinstance(messages, list):
+        payload = dict(payload)
+        payload["messages"] = [
+            decode_stored_telegram_message(str(message))
+            for message in messages
+        ]
+    return payload
+
+
+def print_telegram_digest_from_state(run_date: Optional[str] = None) -> int:
+    payload = load_telegram_messages_state(SUPABASE_DIGEST_MESSAGE_KEY, run_date)
+    if not payload:
+        date_text = run_date or local_run_date()
+        print(f"저장된 digest 텔레그램을 찾지 못했습니다: {SUPABASE_DIGEST_MESSAGE_KEY}_{date_text.replace('-', '')}")
+        return 1
+
+    print(f"run_id: {payload.get('run_id', '')}")
+    print(f"run_date: {payload.get('run_date', '')}")
+    print(f"saved_at: {payload.get('saved_at', '')}")
+    print(f"message_count: {payload.get('message_count', '')}")
+    print("---")
+    print("\n\n--- MESSAGE BREAK ---\n\n".join(payload.get("messages") or []))
+    return 0
+
+
 def telegram_send_enabled(cfg: Dict[str, Any], key: str) -> bool:
     if '--no-telegram' in sys.argv:
         return False
@@ -3867,6 +4179,13 @@ def send_telegram_messages(
 
 
 def main():
+    if '--load-telegram-digest' in sys.argv:
+        arg_index = sys.argv.index('--load-telegram-digest')
+        requested_date = None
+        if len(sys.argv) > arg_index + 1 and not sys.argv[arg_index + 1].startswith("--"):
+            requested_date = sys.argv[arg_index + 1]
+        sys.exit(print_telegram_digest_from_state(requested_date))
+
     run_started = time.time()
     run_id = local_run_id(run_started)
     config_path = 'data/failed_sources.yaml' if '--failed-only' in sys.argv else 'config.yaml'
@@ -4316,7 +4635,7 @@ def main():
     )
     save_digest(digest_text)
     run_log["summary"]["digest_saved"] = True
-    digest_messages_for_state = split_telegram_messages(digest_text)
+    digest_messages_for_state = split_telegram_messages(digest_text.splitlines())
     run_log["summary"]["digest_supabase_saved"] = save_telegram_messages_state(
         SUPABASE_DIGEST_MESSAGE_KEY,
         run_id,
