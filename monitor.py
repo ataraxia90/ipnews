@@ -210,6 +210,9 @@ BAD_TITLE_PATTERNS = [
     r'^help$',
     r'^faq$',
     r'^faqs$',
+    r'^read blog$',
+    r'^on-demand webinars?$',
+    r'^webinars?$',
     r'^login$',
     r'^log in$',
     r'^sign in$',
@@ -255,6 +258,7 @@ BAD_TITLE_PATTERNS = [
     r'^learning and resources$',
     r'^find it fast',
     r'^subscription center$',
+    r'^innovation @ thomson reuters\b',
 ]
 BAD_URL_PATTERNS = [
     # 앵커 / JS
@@ -293,6 +297,7 @@ BAD_URL_PATTERNS = [
     r'/glossary/?$',
     r'/accessibility/?$',
     r'/subscribe/?$',
+    r'/on-demand-webinars?/?$',
 
     # 이벤트/포럼/허브성 경로
     r'/events(?:/|$)',
@@ -1101,10 +1106,25 @@ def extract_date_from_text(text: str) -> Optional[str]:
         .replace("\u3000", " ")
     )
 
+    slash_date = re.search(r'(?P<a>\d{1,2})/(?P<b>\d{1,2})/(?P<y>20\d{2})', normalized_text)
+    if slash_date:
+        first = int(slash_date.group("a"))
+        second = int(slash_date.group("b"))
+        # US sources such as USPTO use MM/DD/YYYY. If only one ordering is valid,
+        # choose that; otherwise prefer MM/DD because most slash-dated feeds here
+        # are US government or US media sources.
+        if second > 12:
+            date = safe_normalize_date_parts(slash_date.group("y"), str(first), str(second))
+        elif first > 12:
+            date = safe_normalize_date_parts(slash_date.group("y"), str(second), str(first))
+        else:
+            date = safe_normalize_date_parts(slash_date.group("y"), str(first), str(second))
+        if date:
+            return date
+
     patterns = [
         r'(?P<y>20\d{2})[-/.](?P<m>\d{1,2})[-/.](?P<d>\d{1,2})',
         r'(?P<y>20\d{2})年(?P<m>\d{1,2})月(?P<d>\d{1,2})日',
-        r'(?P<d>\d{1,2})/(?P<m>\d{1,2})/(?P<y>20\d{2})',
         r'(?P<d>\d{1,2})\s+(?P<mon>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Sept|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(?P<y>20\d{2})',
         r'(?P<mon>Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Sept|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(?P<d>\d{1,2}),?\s+(?P<y>20\d{2})',
     ]

@@ -3,8 +3,11 @@ import unittest
 from bs4 import BeautifulSoup
 
 from monitor import (
+    Article,
     collection_keyword_matches,
+    extract_date_from_text,
     looks_like_non_article,
+    article_stale_reason,
     passes_collection_ip_keyword_filter,
     passes_source_allowlist,
     source_allows_detail_collection_ip_keyword_filter,
@@ -67,6 +70,33 @@ class CollectionKeywordFilterTest(unittest.TestCase):
                 "Glossary",
                 "https://www.bloomberg.com/glossary",
             )
+        )
+        self.assertTrue(
+            looks_like_non_article(
+                "On-demand webinars",
+                "https://www.thomsonreuters.com/en-us/posts/on-demand-webinars/",
+            )
+        )
+        self.assertTrue(
+            looks_like_non_article(
+                "Read blog",
+                "https://www.thomsonreuters.com/en-us/posts/innovation/",
+            )
+        )
+
+    def test_us_slash_dates_are_parsed_for_stale_filtering(self):
+        self.assertEqual(extract_date_from_text("04/30/2026 10:00 AM"), "2026-04-30")
+        article = Article(
+            source="USPTO",
+            region="US",
+            title="Old subscription item",
+            url="https://www.uspto.gov/subscription-center/2026/example",
+            summary_raw="",
+            published="04/30/2026 10:00 AM",
+        )
+        self.assertEqual(
+            article_stale_reason(article, "2026-05-20", 14),
+            "published 2026-04-30 (20 days old)",
         )
 
     def test_reuters_and_bloomberg_search_allow_article_urls_only(self):
