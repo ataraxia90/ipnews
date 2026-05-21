@@ -240,6 +240,7 @@ BAD_TITLE_PATTERNS = [
     r'^leadership$',
     r'^internship$',
     r'^jobs$',
+    r'\bis seeking (?:a |an )?.*(attorney|agent|associate|counsel)\b',
 
     # Copyright Office / 기타 허브
     r'^newsnet$',
@@ -284,6 +285,7 @@ BAD_URL_PATTERNS = [
     r'/faqs/?$',
     r'/careers?/?$',
     r'/jobs/?$',
+    r'/is-seeking-(?:a-|an-)?[^/]*(?:attorney|agent|associate|counsel)',
     r'/login/?$',
     r'/search/?$',
     r'/sitemap/?$',
@@ -1513,6 +1515,27 @@ def fetch_playwright(source: SourceConfig, timeout: int = 30000) -> List[Article
 
 def fetch_rss(source: SourceConfig, timeout: int = 20) -> List[Article]:
     d = feedparser.parse(source.monitor_url)
+    if not getattr(d, "entries", None):
+        try:
+            resp = curl_requests.get(
+                source.monitor_url,
+                impersonate="chrome120",
+                timeout=timeout,
+                verify=False,
+            )
+            if resp.ok:
+                d = feedparser.parse(resp.content)
+            elif "IP Watchdog" in source.name:
+                raise RuntimeError(f"RSS HTTP {resp.status_code}")
+        except Exception as e:
+            if "IP Watchdog" in source.name:
+                raise RuntimeError(f"RSS fetch failed: {e}") from e
+
+    if "IP Watchdog" in source.name and not getattr(d, "entries", None):
+        bozo_error = getattr(d, "bozo_exception", None)
+        detail = f": {bozo_error}" if bozo_error else ""
+        raise RuntimeError(f"RSS returned no entries{detail}")
+
     articles = []
     for entry in source_limited_sequence(list(d.entries), source):
         title = getattr(entry, 'title', '').strip()
@@ -1700,28 +1723,36 @@ def fetch_html_list(source: SourceConfig, timeout: int = 20) -> List[Article]:
         f"title={getattr(source, 'title_selector', '')!r} "
         f"date={getattr(source, 'date_selector', '')!r}"
     )
-    try:
-        # impersonate="chrome120" 옵션이 핵심입니다. 크롬 120 버전의 통신 지문을 완벽 복제합니다.
-        resp = curl_requests.get(
-            source.monitor_url,
-            impersonate="chrome120",
-            timeout=60,
-            verify=False
-        )
+    resp = None
+    last_error = None
+    for attempt in range(1, 4):
+        try:
+            # impersonate="chrome120" 옵션이 핵심입니다. 크롬 120 버전의 통신 지문을 완벽 복제합니다.
+            resp = curl_requests.get(
+                source.monitor_url,
+                impersonate="chrome120",
+                timeout=max(timeout, 20),
+                verify=False
+            )
 
-        print(f"\n[DEBUG] {source.name} HTTP 상태 코드: {resp.status_code}")
+            print(f"\n[DEBUG] {source.name} HTTP 상태 코드: {resp.status_code} (attempt {attempt})")
 
-        # 200번대 응답이 아니면 에러 발생
-        if not resp.ok:
+            if resp.ok:
+                break
+
+            last_error = f"HTTP {resp.status_code}"
             print(f"[DEBUG] 응답 에러: {resp.status_code}")
-            return []
-            # --- 여기에 디버그 코드를 추가합니다 ---
-        if "CNIPA" in source.name:
-            print(f"[DEBUG] 원문 HTML 미리보기 (최대 1000자):\n{resp.text[:1000]}\n")
-            # -----------------------------------
-    except Exception as e:
-        print(f"[DEBUG] {source.name} 요청 실패: {e}")
-        return []
+        except Exception as e:
+            last_error = str(e)
+            print(f"[DEBUG] {source.name} 요청 실패(attempt {attempt}): {e}")
+        if attempt < 3:
+            time.sleep(2 * attempt)
+
+    if not resp or not resp.ok:
+        raise RuntimeError(f"{source.name} 요청 실패: {last_error or 'unknown error'}")
+
+    if "CNIPA" in source.name:
+        print(f"[DEBUG] 원문 HTML 미리보기 (최대 1000자):\n{resp.text[:1000]}\n")
 
     # ==============================================================
     # [추가] 중국 관공서(Hanweb) 특유의 CDATA 봉인 해제 로직
@@ -1743,6 +1774,8 @@ def fetch_html_list(source: SourceConfig, timeout: int = 20) -> List[Article]:
     if getattr(source, "row_selector", ""):
         rows = soup.select(source.row_selector)
         print(f"[DEBUG] {source.name} row 후보 개수: {len(rows)}")
+        if "Bloomberg" in source.name and not rows:
+            raise RuntimeError("Bloomberg search returned no result rows")
 
         items = []
         seen_title = set()

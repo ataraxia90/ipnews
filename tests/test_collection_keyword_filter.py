@@ -83,6 +83,12 @@ class CollectionKeywordFilterTest(unittest.TestCase):
                 "https://www.thomsonreuters.com/en-us/posts/innovation/",
             )
         )
+        self.assertTrue(
+            looks_like_non_article(
+                "Bayes PLLC is Seeking a Patent Preparation and Prosecution Attorney or Agent",
+                "https://ipwatchdog.com/2026/05/20/bayes-pllc-is-seeking-a-patent-preparation-and-prosecution-attorney-or-agent/",
+            )
+        )
 
     def test_us_slash_dates_are_parsed_for_stale_filtering(self):
         self.assertEqual(extract_date_from_text("04/30/2026 10:00 AM"), "2026-04-30")
