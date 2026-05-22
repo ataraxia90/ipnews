@@ -6,6 +6,7 @@ from monitor import (
     Article,
     collection_keyword_matches,
     extract_date_from_text,
+    extract_detail_keyword_text,
     looks_like_non_article,
     article_stale_reason,
     passes_collection_ip_keyword_filter,
@@ -37,7 +38,7 @@ class CollectionKeywordFilterTest(unittest.TestCase):
         self.assertTrue(
             passes_collection_ip_keyword_filter(
                 "미국 백악관(News)",
-                "Executive order on artificial intelligence and innovation",
+                "Executive order on patent policy and artificial intelligence",
                 "https://www.whitehouse.gov/news/",
             )
         )
@@ -55,6 +56,15 @@ class CollectionKeywordFilterTest(unittest.TestCase):
                 "미국 국제무역위원회(ITC)",
                 "Commission announces new hearing schedule",
                 "https://www.usitc.gov/news_releases/",
+            )
+        )
+
+        self.assertFalse(
+            passes_collection_ip_keyword_filter(
+                "誘멸뎅 ?곕갑嫄곕옒?꾩썝??FTC)",
+                "FTC requires firms to settle charges over active listening AI marketing service",
+                "https://www.ftc.gov/news-events/news/press-releases/2026/05/example",
+                summary="technology blog the ftc is on the front lines of tech regulation",
             )
         )
 
@@ -152,6 +162,7 @@ class CollectionKeywordFilterTest(unittest.TestCase):
     def test_short_keywords_require_word_boundaries(self):
         self.assertFalse(collection_keyword_matches("shipping schedule update"))
         self.assertFalse(collection_keyword_matches("chair announces meeting"))
+        self.assertTrue(collection_keyword_matches("tech innovation and regulation"))
         self.assertTrue(collection_keyword_matches("IP enforcement update"))
         self.assertTrue(collection_keyword_matches("AI patent guidance"))
         self.assertTrue(collection_keyword_matches("知识产权保护工作进展"))
@@ -161,6 +172,26 @@ class CollectionKeywordFilterTest(unittest.TestCase):
         self.assertTrue(collection_keyword_matches("商標・著作権に関する審議会"))
         self.assertTrue(collection_keyword_matches("EU action plan on intellectual property"))
         self.assertTrue(collection_keyword_matches("counterfeit goods enforcement"))
+
+    def test_detail_keyword_text_excludes_common_navigation(self):
+        detail_text = extract_detail_keyword_text(
+            """
+            <html>
+              <body>
+                <header>Technology blog: tech innovation and regulation</header>
+                <nav>Patents trademarks copyright</nav>
+                <main>
+                  <h1>FTC requires firms to settle charges</h1>
+                  <p>Active listening AI marketing service deceived customers.</p>
+                </main>
+                <footer>Intellectual property footer link</footer>
+              </body>
+            </html>
+            """
+        )
+        self.assertIn("Active listening AI marketing service", detail_text)
+        self.assertNotIn("tech innovation and regulation", detail_text)
+        self.assertFalse(collection_keyword_matches(detail_text))
 
     def test_rejects_recruitment_items_for_target_sources(self):
         self.assertFalse(

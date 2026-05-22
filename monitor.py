@@ -4,10 +4,11 @@ import json
 import time
 import re
 import html
+from xml.etree import ElementTree
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from typing import List, Dict, Any, Optional
-from urllib.parse import parse_qs, unquote, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse
 from zoneinfo import ZoneInfo
 
 import requests
@@ -100,6 +101,14 @@ CLAUDE_SONNET_CACHE_CREATE_USD_PER_MTOK = 3.75
 CLAUDE_SONNET_CACHE_READ_USD_PER_MTOK = 0.30
 FAILED_SOURCES_PATH = 'data/failed_sources.yaml'
 RUN_LOG_DIR = 'data/run_logs'
+KOREA_HOLIDAY_CACHE_DIR = 'data/holiday_cache'
+KOREA_HOLIDAY_API_URL = 'http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo'
+KOREA_HOLIDAY_API_URLS = [
+    'http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo',
+    'http://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getHoliDeInfo',
+    'https://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo',
+    'https://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getHoliDeInfo',
+]
 SUPABASE_STATE_TABLE = 'monitor_state'
 SUPABASE_SEEN_KEY = 'seen_urls'
 SUPABASE_RESULTS_KEY = 'analysis_results'
@@ -130,6 +139,282 @@ def local_run_id(ts: Optional[float] = None) -> str:
 
 def local_run_date(ts: Optional[float] = None) -> str:
     return local_datetime(ts).strftime("%Y-%m-%d")
+
+
+def truthy_config_value(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "y", "on")
+    return default
+
+
+def korean_holiday_cache_path(year: int, cache_dir: str = KOREA_HOLIDAY_CACHE_DIR) -> str:
+    return os.path.join(cache_dir, f"korean_holidays_{int(year):04d}.json")
+
+
+def parse_korean_holiday_payload(payload: Any) -> Dict[str, str]:
+    holidays: Dict[str, str] = {}
+    body = (((payload or {}).get("response") or {}).get("body") or {}) if isinstance(payload, dict) else {}
+    items = (body.get("items") or {}).get("item") if isinstance(body, dict) else None
+    if not items:
+        return holidays
+    if isinstance(items, dict):
+        items = [items]
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        locdate = str(item.get("locdate") or "").strip()
+        if not re.fullmatch(r"\d{8}", locdate):
+            continue
+        is_holiday = str(item.get("isHoliday") or "Y").strip().upper()
+        if is_holiday and is_holiday != "Y":
+            continue
+        date = f"{locdate[:4]}-{locdate[4:6]}-{locdate[6:8]}"
+        holidays[date] = str(item.get("dateName") or item.get("dateKind") or "공휴일").strip()
+    return holidays
+
+
+def parse_korean_holiday_xml(text: str) -> Dict[str, str]:
+    holidays: Dict[str, str] = {}
+    try:
+        root = ElementTree.fromstring(text or "")
+    except ElementTree.ParseError:
+        return holidays
+
+    for item in root.findall(".//item"):
+        locdate = (item.findtext("locdate") or "").strip()
+        if not re.fullmatch(r"\d{8}", locdate):
+            continue
+        is_holiday = (item.findtext("isHoliday") or "Y").strip().upper()
+        if is_holiday and is_holiday != "Y":
+            continue
+        date = f"{locdate[:4]}-{locdate[4:6]}-{locdate[6:8]}"
+        holidays[date] = (item.findtext("dateName") or item.findtext("dateKind") or "공휴일").strip()
+    return holidays
+
+
+def korean_holiday_api_error_message(text: str) -> str:
+    try:
+        payload = json.loads(text or "")
+    except ValueError:
+        payload = None
+    if isinstance(payload, dict):
+        header = ((payload.get("response") or {}).get("header") or {})
+        code = str(header.get("resultCode") or "").strip()
+        message = str(header.get("resultMsg") or "").strip()
+        if code and code != "00":
+            return f"{code} {message}".strip()
+
+    try:
+        root = ElementTree.fromstring(text or "")
+    except ElementTree.ParseError:
+        return ""
+    code = (root.findtext(".//resultCode") or "").strip()
+    message = (root.findtext(".//resultMsg") or "").strip()
+    if code and code != "00":
+        return f"{code} {message}".strip()
+    return ""
+
+
+def read_korean_holiday_cache(year: int, cache_dir: str = KOREA_HOLIDAY_CACHE_DIR) -> Dict[str, str]:
+    path = korean_holiday_cache_path(year, cache_dir=cache_dir)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+    holidays = data.get("holidays") if isinstance(data, dict) else data
+    if not isinstance(holidays, dict):
+        return {}
+    return {str(k): str(v) for k, v in holidays.items() if re.fullmatch(r"\d{4}-\d{2}-\d{2}", str(k))}
+
+
+def write_korean_holiday_cache(
+    year: int,
+    holidays: Dict[str, str],
+    cache_dir: str = KOREA_HOLIDAY_CACHE_DIR,
+) -> str:
+    os.makedirs(cache_dir, exist_ok=True)
+    path = korean_holiday_cache_path(year, cache_dir=cache_dir)
+    payload = {
+        "year": int(year),
+        "updated_at": local_timestamp(),
+        "source": "data.go.kr SpcdeInfoService/getRestDeInfo",
+        "holidays": dict(sorted((holidays or {}).items())),
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return path
+
+
+def fetch_korean_public_holidays_from_api(
+    year: int,
+    service_key: Optional[str] = None,
+    timeout: int = 15,
+) -> Dict[str, str]:
+    service_key = (service_key or os.getenv("KOREA_HOLIDAY_API_KEY") or "").strip()
+    if not service_key:
+        raise RuntimeError("KOREA_HOLIDAY_API_KEY is not set")
+
+    errors = []
+    for api_url in KOREA_HOLIDAY_API_URLS:
+        holidays: Dict[str, str] = {}
+        for month in range(1, 13):
+            base_params = {
+                "solYear": f"{int(year):04d}",
+                "solMonth": f"{month:02d}",
+                "numOfRows": "20",
+                "_type": "json",
+            }
+            request_variants = [
+                (api_url, {"ServiceKey": service_key, **base_params}),
+                (api_url, {"serviceKey": service_key, **base_params}),
+                (f"{api_url}?ServiceKey={service_key}&{urlencode(base_params)}", None),
+            ]
+            month_ok = False
+            last_error = ""
+            for url, params in request_variants:
+                try:
+                    resp = requests.get(url, params=params, timeout=timeout)
+                    resp.raise_for_status()
+                except Exception as e:
+                    last_error = type(e).__name__
+                    continue
+
+                api_error = korean_holiday_api_error_message(resp.text)
+                if api_error:
+                    last_error = api_error
+                    continue
+
+                try:
+                    month_holidays = parse_korean_holiday_payload(resp.json())
+                except ValueError:
+                    month_holidays = parse_korean_holiday_xml(resp.text)
+
+                if not month_holidays:
+                    month_holidays = parse_korean_holiday_xml(resp.text)
+                holidays.update(month_holidays)
+                month_ok = True
+                break
+
+            if not month_ok:
+                errors.append(f"{api_url.rsplit('/', 1)[-1]} {month:02d}: {last_error or 'empty response'}")
+                break
+        if holidays:
+            return dict(sorted(holidays.items()))
+
+        if not errors or api_url.rsplit('/', 1)[-1] not in errors[-1]:
+            try:
+                fallback_params = {
+                    "ServiceKey": service_key,
+                    "solYear": f"{int(year):04d}",
+                    "numOfRows": "100",
+                    "_type": "json",
+                }
+                resp = requests.get(api_url, params=fallback_params, timeout=timeout)
+                resp.raise_for_status()
+            except Exception as e:
+                errors.append(f"{api_url.rsplit('/', 1)[-1]}: {type(e).__name__}")
+                continue
+
+            api_error = korean_holiday_api_error_message(resp.text)
+            if api_error:
+                errors.append(f"{api_url.rsplit('/', 1)[-1]}: {api_error}")
+                continue
+            try:
+                holidays = parse_korean_holiday_payload(resp.json())
+            except ValueError:
+                holidays = parse_korean_holiday_xml(resp.text)
+
+            if not holidays:
+                holidays = parse_korean_holiday_xml(resp.text)
+            if holidays:
+                return dict(sorted(holidays.items()))
+            errors.append(f"{api_url.rsplit('/', 1)[-1]}: empty response")
+
+    raise RuntimeError("Korean holiday API failed: " + ", ".join(errors[-6:]))
+
+
+def korean_holiday_overrides(cfg: Optional[Dict[str, Any]], year: int) -> Dict[str, str]:
+    schedule_cfg = (cfg or {}).get("schedule") or {}
+    merged: Dict[str, str] = {}
+    for key in ("korean_public_holidays", "korean_public_holiday_overrides"):
+        values = schedule_cfg.get(key) or {}
+        if not isinstance(values, dict):
+            continue
+        year_values = values.get(str(year)) or values.get(int(year)) or {}
+        if isinstance(year_values, dict):
+            values = {**values, **year_values}
+        for date, name in values.items():
+            date_text = str(date).strip()
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", date_text):
+                merged[date_text] = str(name or "공휴일")
+    return {date: name for date, name in merged.items() if date.startswith(f"{int(year):04d}-")}
+
+
+def load_korean_public_holidays(
+    year: int,
+    cfg: Optional[Dict[str, Any]] = None,
+    refresh: bool = False,
+    cache_dir: str = KOREA_HOLIDAY_CACHE_DIR,
+) -> Dict[str, str]:
+    holidays: Dict[str, str] = {}
+    if not refresh:
+        holidays = read_korean_holiday_cache(year, cache_dir=cache_dir)
+
+    if refresh or not holidays:
+        try:
+            holidays = fetch_korean_public_holidays_from_api(year)
+            write_korean_holiday_cache(year, holidays, cache_dir=cache_dir)
+        except Exception as e:
+            cached = read_korean_holiday_cache(year, cache_dir=cache_dir)
+            if cached:
+                print(f"한국 공휴일 API 조회 실패, 캐시 사용: {e}")
+                holidays = cached
+            else:
+                print(f"한국 공휴일 API 조회 실패, 캐시 없음: {e}")
+                holidays = {}
+
+    holidays.update(korean_holiday_overrides(cfg, year))
+    return dict(sorted(holidays.items()))
+
+
+def korean_public_holiday_for_date(
+    date_text: str,
+    cfg: Optional[Dict[str, Any]] = None,
+    refresh: bool = False,
+    cache_dir: str = KOREA_HOLIDAY_CACHE_DIR,
+) -> Optional[str]:
+    try:
+        target = datetime.strptime(date_text, "%Y-%m-%d")
+    except ValueError:
+        return None
+    holidays = load_korean_public_holidays(target.year, cfg=cfg, refresh=refresh, cache_dir=cache_dir)
+    return holidays.get(date_text)
+
+
+def should_skip_korean_public_holiday_run(
+    date_text: str,
+    cfg: Optional[Dict[str, Any]],
+    cache_dir: str = KOREA_HOLIDAY_CACHE_DIR,
+) -> Optional[str]:
+    schedule_cfg = (cfg or {}).get("schedule") or {}
+    enabled = truthy_config_value(schedule_cfg.get("skip_korean_public_holidays"), default=False)
+    if not enabled:
+        return None
+    if os.getenv("FORCE_MONITOR_RUN", "").lower() in ("1", "true", "yes"):
+        return None
+    if "--ignore-korean-holiday" in sys.argv or "--ignore-korean-holidays" in sys.argv:
+        return None
+    return korean_public_holiday_for_date(date_text, cfg=cfg, refresh=False, cache_dir=cache_dir)
 
 
 def seconds_until_local_time(target_hhmm: str, now: Optional[datetime] = None) -> int:
@@ -675,12 +960,40 @@ def fetch_detail_text_for_keyword_filter(url: str, timeout: int = 20) -> str:
         return ""
 
     raw_html = decode_html_response(resp)
-    soup = BeautifulSoup(raw_html, "html.parser")
-    for tag in soup(["script", "style", "noscript"]):
-        tag.decompose()
-    text = soup.get_text(" ", strip=True)
+    text = extract_detail_keyword_text(raw_html)
     DETAIL_KEYWORD_TEXT_CACHE[url] = text[:20000]
     return DETAIL_KEYWORD_TEXT_CACHE[url]
+
+
+def extract_detail_keyword_text(raw_html: str) -> str:
+    soup = BeautifulSoup(raw_html, "html.parser")
+    for tag in soup(["script", "style", "noscript", "nav", "header", "footer", "aside"]):
+        tag.decompose()
+    for selector in [
+        '[role="banner"]',
+        '[role="navigation"]',
+        '[role="contentinfo"]',
+        '.breadcrumb',
+        '.breadcrumbs',
+        '.menu',
+        '.nav',
+        '.navigation',
+        '.related',
+        '.share',
+        '.social',
+        '.sidebar',
+    ]:
+        for tag in soup.select(selector):
+            tag.decompose()
+
+    content = (
+        soup.find("article")
+        or soup.find("main")
+        or soup.find(attrs={"role": "main"})
+        or soup.body
+        or soup
+    )
+    return content.get_text(" ", strip=True)
 
 
 def passes_collection_ip_keyword_filter(
@@ -2871,6 +3184,8 @@ def cluster_digest_topics(items: List[AnalyzedArticle]) -> List[DigestTopicClust
         key=lambda cluster: (
             max(item.importance_score for item in cluster.items),
             cluster.representative.importance_score,
+            digest_source_authority_score(cluster.representative),
+            digest_direct_report_score(cluster.representative),
         ),
         reverse=True,
     )
@@ -4239,6 +4554,24 @@ def main():
             requested_date = sys.argv[arg_index + 1]
         sys.exit(print_telegram_digest_from_state(requested_date))
 
+    if '--check-korean-holiday' in sys.argv:
+        arg_index = sys.argv.index('--check-korean-holiday')
+        date_text = local_run_date()
+        if len(sys.argv) > arg_index + 1 and not sys.argv[arg_index + 1].startswith("--"):
+            date_text = sys.argv[arg_index + 1]
+        cfg = load_config('config.yaml')
+        refresh = '--refresh-korean-holidays' in sys.argv
+        holiday_name = korean_public_holiday_for_date(date_text, cfg=cfg, refresh=refresh)
+        year = int(date_text[:4])
+        holidays = load_korean_public_holidays(year, cfg=cfg, refresh=False)
+        print(f"date: {date_text}")
+        print(f"is_korean_public_holiday: {bool(holiday_name)}")
+        if holiday_name:
+            print(f"name: {holiday_name}")
+        print(f"cached_holidays_{year}: {len(holidays)}")
+        print(f"cache_path: {korean_holiday_cache_path(year)}")
+        sys.exit(0)
+
     run_started = time.time()
     run_id = local_run_id(run_started)
     config_path = 'data/failed_sources.yaml' if '--failed-only' in sys.argv else 'config.yaml'
@@ -4300,6 +4633,7 @@ def main():
             "daily_results_dir": DAILY_RESULTS_DIR,
             "sent_digest_topics": SENT_DIGEST_TOPICS_PATH,
             "telegram_digest": DIGEST_PATH,
+            "korean_holiday_cache": korean_holiday_cache_path(int(run_date_from_run_id(run_id)[:4])),
         },
         "summary": {
             "total_sources": len(sources),
@@ -4354,6 +4688,13 @@ def main():
             "telegram_send_enabled": cfg.get("telegram", {}).get("send_enabled", False),
             "telegram_review_send_enabled": cfg.get("telegram", {}).get("review_send_enabled", False),
             "telegram_digest_send_enabled": cfg.get("telegram", {}).get("digest_send_enabled", False),
+            "korean_public_holiday_skip_enabled": truthy_config_value(
+                (cfg.get("schedule") or {}).get("skip_korean_public_holidays"),
+                default=False,
+            ),
+            "korean_public_holiday_skipped": False,
+            "korean_public_holiday_name": None,
+            "korean_public_holiday_cached_count": 0,
         },
         "sources": [],
         "analysis_errors": [],
@@ -4363,7 +4704,24 @@ def main():
         "digest_selection_skips": [],
     }
 
-    duplicate_run = should_skip_duplicate_scheduled_run(run_date_from_run_id(run_id))
+    run_date = run_date_from_run_id(run_id)
+    holiday_name = should_skip_korean_public_holiday_run(run_date, cfg)
+    if holiday_name:
+        holiday_year = int(run_date[:4])
+        cached_holidays = load_korean_public_holidays(holiday_year, cfg=cfg, refresh=False)
+        run_log["korean_public_holiday_skip"] = True
+        run_log["finished_at"] = local_timestamp()
+        run_log["duration_seconds"] = round(time.time() - run_started, 3)
+        run_log["summary"]["korean_public_holiday_skipped"] = True
+        run_log["summary"]["korean_public_holiday_name"] = holiday_name
+        run_log["summary"]["korean_public_holiday_cached_count"] = len(cached_holidays)
+        print(f"한국 공휴일({run_date}, {holiday_name})이라 정규 실행을 건너뜁니다.")
+        print(f"공휴일 캐시: {korean_holiday_cache_path(holiday_year)} ({len(cached_holidays)}건)")
+        log_path = save_run_log(run_log)
+        print(f'[DEBUG] 실행 로그 저장: {log_path}')
+        return
+
+    duplicate_run = should_skip_duplicate_scheduled_run(run_date)
     if duplicate_run:
         run_log["duplicate_skip"] = True
         run_log["duplicate_of_run_id"] = duplicate_run.get("run_id")

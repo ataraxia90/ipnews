@@ -9,18 +9,18 @@ from monitor import (
 )
 
 
-def analyzed_article(title, topic_key, score):
+def analyzed_article(title, topic_key, score, source="Test Source", url=None, raw_excerpt=""):
     return AnalyzedArticle(
-        source="Test Source",
+        source=source,
         region="Test Region",
         title=title,
-        url=f"https://example.com/{title.lower().replace(' ', '-')}",
+        url=url or f"https://example.com/{title.lower().replace(' ', '-')}",
         published="2026-05-02",
         summary_ko=f"Summary for {title}",
         importance_score=score,
         category="Test",
         key_points=[],
-        raw_excerpt="",
+        raw_excerpt=raw_excerpt,
         topic_key=topic_key,
         topic_label=topic_key,
         issue_region="Test Region",
@@ -57,6 +57,50 @@ class DigestClusterSelectionTest(unittest.TestCase):
             ["issue-a", "issue-b", "issue-c", "issue-d", "issue-e"],
         )
 
+    def test_equal_scores_prefer_authority_then_direct_reporting(self):
+        official = analyzed_article(
+            "Official patent policy update",
+            "official-policy",
+            62,
+            source="미국 특허상표청(USPTO)",
+            url="https://www.uspto.gov/news/official-policy-update",
+        )
+        direct = analyzed_article(
+            "Court decision on patent venue",
+            "court-decision",
+            62,
+            source="IP Watchdog",
+            url="https://ipwatchdog.com/2026/05/22/court-decision/",
+            raw_excerpt="The court issued a decision in the patent dispute.",
+        )
+        general = analyzed_article(
+            "General patent commentary",
+            "general-commentary",
+            62,
+            source="IP Watchdog",
+            url="https://ipwatchdog.com/2026/05/22/general-commentary/",
+        )
+
+        selected, skipped = select_digest_clusters(
+            [general, direct, official],
+            top_n=3,
+            min_importance=0,
+            sent_topics=[],
+            recent_topic_days=0,
+            run_date="2026-05-02",
+            max_paid_sources=3,
+        )
+
+        self.assertEqual(skipped, [])
+        self.assertEqual(
+            [cluster.representative.title for cluster in selected],
+            [
+                "Official patent policy update",
+                "Court decision on patent venue",
+                "General patent commentary",
+            ],
+        )
+
     def test_digest_title_includes_run_date(self):
         items = [analyzed_article("Issue A", "issue-a", 95)]
         selected, _ = select_digest_clusters(
@@ -69,12 +113,16 @@ class DigestClusterSelectionTest(unittest.TestCase):
         )
 
         digest = render_telegram_digest(selected, run_date="2026-05-02")
+        first_line = digest.splitlines()[0]
 
-        self.assertTrue(digest.startswith("IP 동향 Digest - 2026-05-02 상위 1건"))
+        self.assertTrue(first_line.startswith("< "))
+        self.assertIn("2026", first_line)
+        self.assertIn("5", first_line)
+        self.assertIn("2", first_line)
 
     def test_send_telegram_messages_returns_digest_chunk_count(self):
         cfg = {"telegram": {"digest_send_enabled": False}}
-        text = "IP 동향 Digest - 2026-05-02 상위 1건\n\n" + ("a" * 3600)
+        text = "IP Digest - 2026-05-02 top 1\n\n" + ("a" * 3600)
 
         count = send_telegram_messages(
             text,
