@@ -1,6 +1,6 @@
 import unittest
 
-from monitor import normalize_korean_policy_terms
+from monitor import clamp_score_axis, normalize_korean_policy_terms
 
 
 class PolicyTermNormalizationTest(unittest.TestCase):
@@ -23,6 +23,12 @@ class PolicyTermNormalizationTest(unittest.TestCase):
             normalized,
             "지식재산처(MOIP)와 지식재산처(MOIP), 지식재산처(MOIP)이 의견을 냈다.",
         )
+
+    def test_score_axis_is_clamped(self):
+        self.assertEqual(clamp_score_axis("87"), 87)
+        self.assertEqual(clamp_score_axis(101), 100)
+        self.assertEqual(clamp_score_axis(-1), 0)
+        self.assertEqual(clamp_score_axis("bad", default=42), 42)
 
 
 if __name__ == "__main__":

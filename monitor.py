@@ -66,6 +66,12 @@ class AnalyzedArticle:
     topic_label: str = ""
     issue_region: str = ""
     digest_bullets: Optional[List[str]] = None
+    ip_directness: int = 0
+    policy_materiality: int = 0
+    source_authority: int = 0
+    korea_relevance: int = 0
+    timeliness: int = 0
+    score_reason: str = ""
     claude_model: str = ""
     claude_input_tokens: int = 0
     claude_output_tokens: int = 0
@@ -2783,6 +2789,14 @@ def normalize_korean_policy_terms(text: str) -> str:
     return normalized
 
 
+def clamp_score_axis(value: Any, default: int = 0) -> int:
+    try:
+        score = int(value)
+    except (TypeError, ValueError):
+        score = default
+    return max(0, min(100, score))
+
+
 class ClaudeClient:
     def __init__(self, model: str = 'claude-sonnet-4-6'):
         api_key = os.getenv('ANTHROPIC_API_KEY')
@@ -2820,9 +2834,19 @@ class ClaudeClient:
 - 원문 요약/발췌(있으면): {art.summary_raw}
 
 요구 사항:
-1. 중요도 점수를 0~100 사이 정수로 매겨라. (높을수록 한국 지식재산 정책 측면 중요)
+1. 중요도 점수를 0~100 사이 정수로 매기되, 먼저 아래 5개 평가축을 각각 0~100으로 판단한 뒤 종합하라.
+   - ip_directness: 특허·상표·디자인·저작권·영업비밀·IP 집행·라이선스·표준필수특허 등 지식재산 이슈가 얼마나 직접적인가.
+   - policy_materiality: 법령·심사/심판 실무·집행 기준·판례·국제규범·기관 정책 변화가 얼마나 실질적인가.
+   - source_authority: 공식기관·법원·국제기구·규제기관 등 출처의 권위가 얼마나 높은가.
+   - korea_relevance: 한국 또는 지식재산처(MOIP), 한국 기업, 한국 제도에 직접 참고할 만한 정도가 얼마나 높은가.
+   - timeliness: 최근성·긴급성·후속 조치 필요성이 얼마나 높은가.
+   - 최종 importance_score는 위 축을 종합하되, source_authority만 높고 ip_directness나 policy_materiality가 낮으면 높은 점수를 주지 마라.
+   - "Technology", "innovation", "AI", "digital" 같은 일반 기술 키워드만으로 IP 중요도를 높이지 말고, IP 제도·권리·집행·라이선스·분쟁과의 직접 연결을 확인하라.
+   - 2차 출처라도 USPTO/PTAB/IPR/Director Review/Inter Partes Review처럼 특허심판·심사 실무 변화가 직접 드러나면 ip_directness와 policy_materiality를 높게 평가할 수 있다.
+   - score_reason에는 최종 점수의 핵심 이유를 1문장으로 쓰되, 어떤 축이 높고 낮았는지 드러나게 하라.
    - '한국'이나 'South Korea' '삼성전자' 'samsung' 'sk'등 한국 기업을 직접 언급하고 있으면 중요도 점수를 상향하고, 요약에 해당 내용을 포함하라. 직접 언급이 없으면 한국 관련성만으로 과도하게 점수를 올리지 마라.
    - 1차 출처(외국 정부기관, 특허청, 법원 등)의 자료는 점수를 상향하고, 2차 출처(언론 보도 등)의 자료는 점수를 하향하라.
+   - 다만 1차 출처라는 이유만으로 고득점을 주지 말고, 반드시 IP 직접성과 정책 실질성을 함께 확인하라.
    - 점수는 아래 구간을 기준으로 부여하라. 애매한 경우에는 높은 구간으로 올리지 말고 낮은 구간의 상단 점수를 사용하라.
      * 0~20: 비IP 이슈, 단순 행사·기관 소개·자료 게시·고정 안내 페이지
      * 21~40: IP 관련성은 있으나 정책 중요도 낮음, 홍보·교육·사례·개별 기업 동향 중심
@@ -2869,6 +2893,12 @@ class ClaudeClient:
 JSON으로만 응답하라:
 {{
   "importance_score": 87,
+  "ip_directness": 90,
+  "policy_materiality": 85,
+  "source_authority": 95,
+  "korea_relevance": 50,
+  "timeliness": 80,
+  "score_reason": "IP 직접성과 정책 실질성이 모두 높고 공식기관 발표라 높은 점수를 부여했다.",
   "category": "AI규제",
   "summary_ko": "…",
   "digest_bullets": ["배경: …", "쟁점: …", "향후일정: …"],
@@ -2879,7 +2909,7 @@ JSON으로만 응답하라:
 """
         resp = self.client.messages.create(
             model=self.model,
-            max_tokens=800,
+            max_tokens=1100,
             temperature=0.1,
             messages=[{'role': 'user', 'content': prompt}]
         )
@@ -2906,6 +2936,12 @@ JSON으로만 응답하라:
 
         importance = int(data.get('importance_score', 50))
         importance = max(0, min(100, importance))
+        ip_directness = clamp_score_axis(data.get("ip_directness"))
+        policy_materiality = clamp_score_axis(data.get("policy_materiality"))
+        source_authority = clamp_score_axis(data.get("source_authority"))
+        korea_relevance = clamp_score_axis(data.get("korea_relevance"))
+        timeliness = clamp_score_axis(data.get("timeliness"))
+        score_reason = normalize_korean_policy_terms(str(data.get("score_reason", "")).strip())
 
         category = str(data.get('category', '기타')).strip() or '기타'
         summary_ko = normalize_korean_policy_terms(str(data.get('summary_ko', '')).strip())
@@ -2936,6 +2972,12 @@ JSON으로만 응답하라:
             topic_label=topic_label,
             issue_region=issue_region,
             digest_bullets=digest_bullets,
+            ip_directness=ip_directness,
+            policy_materiality=policy_materiality,
+            source_authority=source_authority,
+            korea_relevance=korea_relevance,
+            timeliness=timeliness,
+            score_reason=score_reason,
             claude_model=self.model,
             claude_input_tokens=input_tokens,
             claude_output_tokens=output_tokens,
@@ -3735,6 +3777,24 @@ def notion_item_blocks(item: AnalyzedArticle, sent_to_digest: bool, index: int) 
         notion_bullet(f"점수/분류/출처: {item.importance_score} | {item.category} | {item.source}"),
         notion_bullet(f"지역: {digest_region_label(item)}"),
     ]
+    score_reason = getattr(item, "score_reason", "") or ""
+    if score_reason:
+        blocks.append(notion_bullet(f"점수 근거: {score_reason}"))
+    score_axes = [
+        int(getattr(item, "ip_directness", 0) or 0),
+        int(getattr(item, "policy_materiality", 0) or 0),
+        int(getattr(item, "source_authority", 0) or 0),
+        int(getattr(item, "korea_relevance", 0) or 0),
+        int(getattr(item, "timeliness", 0) or 0),
+    ]
+    if any(score_axes):
+        blocks.append(
+            notion_bullet(
+                "평가축: "
+                f"IP직접성 {score_axes[0]} / 정책실질성 {score_axes[1]} / "
+                f"출처권위 {score_axes[2]} / 한국관련성 {score_axes[3]} / 시의성 {score_axes[4]}"
+            )
+        )
     topic_label = getattr(item, "topic_label", "") or ""
     if topic_label:
         blocks.append(notion_bullet(f"이슈: {topic_label}"))
