@@ -120,6 +120,25 @@ class DigestClusterSelectionTest(unittest.TestCase):
         self.assertIn("5", first_line)
         self.assertIn("2", first_line)
 
+    def test_digest_does_not_show_related_cluster_count(self):
+        items = [
+            analyzed_article("Issue A report 1", "issue-a", 95),
+            analyzed_article("Issue A report 2", "issue-a", 94),
+        ]
+        selected, _ = select_digest_clusters(
+            items,
+            top_n=5,
+            min_importance=0,
+            sent_topics=[],
+            recent_topic_days=0,
+            run_date="2026-05-02",
+        )
+
+        digest = render_telegram_digest(selected, run_date="2026-05-02")
+
+        self.assertNotIn("관련:", digest)
+        self.assertNotIn("1건", digest)
+
     def test_send_telegram_messages_returns_digest_chunk_count(self):
         cfg = {"telegram": {"digest_send_enabled": False}}
         text = "IP Digest - 2026-05-02 top 1\n\n" + ("a" * 3600)

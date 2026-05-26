@@ -2769,6 +2769,20 @@ def fetch_articles_for_source(source: SourceConfig, timeout: int = 20) -> List[A
     return []
 
 
+def normalize_korean_policy_terms(text: str) -> str:
+    if not text:
+        return ""
+    normalized = str(text)
+    normalized = re.sub(r'USPTO\s*(?:원장|국장)', 'USPTO 청장', normalized, flags=re.IGNORECASE)
+    normalized = re.sub(r'미국\s*특허상표청\s*(?:원장|국장)', '미국 특허상표청 청장', normalized)
+    normalized = re.sub(r'원장\s*\(Director\)', '청장(Director)', normalized)
+    normalized = re.sub(r'국장\s*\(Director\)', '청장(Director)', normalized)
+    normalized = re.sub(r'(?<![A-Za-z])KIPO(?![A-Za-z])', '지식재산처(MOIP)', normalized)
+    normalized = re.sub(r'한국\s*특허청', '지식재산처(MOIP)', normalized)
+    normalized = re.sub(r'대한민국\s*특허청', '지식재산처(MOIP)', normalized)
+    return normalized
+
+
 class ClaudeClient:
     def __init__(self, model: str = 'claude-sonnet-4-6'):
         api_key = os.getenv('ANTHROPIC_API_KEY')
@@ -2845,6 +2859,8 @@ class ClaudeClient:
 추가 규칙:
 - factual summary와 policy implication을 엄격히 분리하라. `summary_ko`와 `digest_bullets`에는 원문에 나타난 사실관계만 넣고, 정책적 시사점·평가·추론은 작성하지 마라.
 - "한국도", "국내 제도", "한국 정책당국" 같은 표현은 원문 직접 언급이 없으면 `summary_ko`에서 금지한다.
+- 용어 번역을 일관되게 하라. USPTO의 "Director"는 "청장"으로 번역하고, "원장" 또는 "국장"으로 번역하지 마라.
+- 한국의 지식재산 행정기관은 "한국특허청(KIPO)"이 아니라 "지식재산처(MOIP)"로 표기하라.
 - 단순 기관 소개, 서비스 소개, 검색도구 안내, 데이터베이스 안내, 메뉴 페이지, 고정된 법령 원문 페이지(예: Title 17 전체 텍스트)는 정책 변경이 없다면 중요도를 0~20 사이로 낮게 평가하라.
 - 특허검색 서비스, 특허·저작권 등록부, 공보 시스템, 포털, 안내 페이지처럼 '운영 중인 툴/서비스' 중심인 문서는, 새로운 정책·제도 도입이나 변경 내용을 포함하지 않는 한 중요도를 0~20으로 제한하라.
 - "Patents", "Patent basics", "Search our patent database" 같은 제도·툴 안내 랜딩 페이지는 신규 정책 내용이 없으면 중요도를 0~25로 제한하라.
@@ -2892,11 +2908,15 @@ JSON으로만 응답하라:
         importance = max(0, min(100, importance))
 
         category = str(data.get('category', '기타')).strip() or '기타'
-        summary_ko = str(data.get('summary_ko', '')).strip()
+        summary_ko = normalize_korean_policy_terms(str(data.get('summary_ko', '')).strip())
         digest_bullets = data.get('digest_bullets', [])
         if not isinstance(digest_bullets, list):
             digest_bullets = [str(digest_bullets)]
-        digest_bullets = [str(x).strip() for x in digest_bullets if str(x).strip()]
+        digest_bullets = [
+            normalize_korean_policy_terms(str(x).strip())
+            for x in digest_bullets
+            if str(x).strip()
+        ]
         topic_key = normalize_topic_key(str(data.get('topic_key', '')).strip())
         topic_label = str(data.get('topic_label', '')).strip()
         issue_region = str(data.get('issue_region', '')).strip() or art.region
@@ -3470,13 +3490,6 @@ def render_telegram_digest(
             source_label = f"{source_label} 🔒"
         lines.append(f"{digest_region_icon(region_label)} {region_label} | 📰 {source_label} | 🏷 {item.category}")
         lines.append("")
-        if len(cluster.items) > 1:
-            related = [
-                f"{digest_source_label(x.source)}({x.importance_score}점)"
-                for x in cluster.items[1:4]
-            ]
-            suffix = f": {', '.join(related)}" if related else ""
-            lines.append(f"• 관련: {len(cluster.items) - 1}건{suffix}")
         digest_bullets = getattr(item, "digest_bullets", None) or []
         if item.summary_ko:
             lines.append("📝 요약")
