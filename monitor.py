@@ -4644,7 +4644,7 @@ def main():
             "analysis_duration_seconds": None,
             "digest_telegram_duration_seconds": None,
             "digest_telegram_wait_seconds": 0,
-            "digest_telegram_scheduled_send_time": "09:00",
+            "digest_telegram_scheduled_send_time": "07:30",
             "digest_recent_topic_days": recent_topic_days,
             "digest_recent_topic_skipped_count": 0,
             "digest_selection_skipped_count": 0,
@@ -5053,7 +5053,7 @@ def main():
         digest_messages_for_state,
         "digest",
     )
-    digest_send_time = os.getenv("DIGEST_SEND_TIME_KST", "09:00")
+    digest_send_time = os.getenv("DIGEST_SEND_TIME_KST", "07:30")
     run_log["summary"]["digest_telegram_scheduled_send_time"] = digest_send_time
     digest_wait_seconds = 0
     if is_scheduled_run() and cfg.get("telegram", {}).get("digest_send_enabled", False) and '--no-telegram' not in sys.argv:
