@@ -3777,24 +3777,6 @@ def notion_item_blocks(item: AnalyzedArticle, sent_to_digest: bool, index: int) 
         notion_bullet(f"점수/분류/출처: {item.importance_score} | {item.category} | {item.source}"),
         notion_bullet(f"지역: {digest_region_label(item)}"),
     ]
-    score_reason = getattr(item, "score_reason", "") or ""
-    if score_reason:
-        blocks.append(notion_bullet(f"점수 근거: {score_reason}"))
-    score_axes = [
-        int(getattr(item, "ip_directness", 0) or 0),
-        int(getattr(item, "policy_materiality", 0) or 0),
-        int(getattr(item, "source_authority", 0) or 0),
-        int(getattr(item, "korea_relevance", 0) or 0),
-        int(getattr(item, "timeliness", 0) or 0),
-    ]
-    if any(score_axes):
-        blocks.append(
-            notion_bullet(
-                "평가축: "
-                f"IP직접성 {score_axes[0]} / 정책실질성 {score_axes[1]} / "
-                f"출처권위 {score_axes[2]} / 한국관련성 {score_axes[3]} / 시의성 {score_axes[4]}"
-            )
-        )
     topic_label = getattr(item, "topic_label", "") or ""
     if topic_label:
         blocks.append(notion_bullet(f"이슈: {topic_label}"))
