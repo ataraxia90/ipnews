@@ -3141,12 +3141,37 @@ def digest_topic_text(item: AnalyzedArticle) -> str:
     ])
 
 
+def digest_normalized_title_key(title: str) -> str:
+    normalized = normalize_topic_text(title or "")
+    tokens = [token for token in normalized.split() if token not in DIGEST_TOPIC_STOPWORDS]
+    if len(tokens) < 4:
+        return ""
+    key = "-".join(tokens[:18])
+    return key if len(key) >= 20 else ""
+
+
+def is_uspto_distribution_item(item: AnalyzedArticle) -> bool:
+    source = normalize_topic_text(item.source or "")
+    url = (item.url or "").lower()
+    domain = urlparse(url).netloc.lower()
+    return (
+        "uspto" in source
+        or "uspto.gov" in domain
+        or ("content.govdelivery.com" in domain and "/accounts/uspto/" in url)
+    )
+
+
 def extract_digest_topic_keys(item: AnalyzedArticle) -> set:
     text = normalize_topic_text(digest_topic_text(item))
     keys = set()
     topic_key = normalize_topic_key(getattr(item, "topic_key", ""))
     if topic_key:
         keys.add(f"topic:{topic_key}")
+    title_key = digest_normalized_title_key(item.title or "")
+    if title_key:
+        keys.add(f"title:{title_key}")
+        if is_uspto_distribution_item(item):
+            keys.add(f"uspto-title:{title_key}")
 
     if "samsung" in text and "zte" in text and "frand" in text:
         keys.add("entity:samsung-zte-frand")
@@ -3181,7 +3206,10 @@ def extract_digest_topic_keys(item: AnalyzedArticle) -> set:
 
 
 def extract_digest_topic_tokens(item: AnalyzedArticle) -> set:
-    text = normalize_topic_text(digest_topic_text(item))
+    text = normalize_topic_text(" ".join([
+        item.title or "",
+        getattr(item, "topic_label", "") or "",
+    ]))
     tokens = set()
     for token in text.split():
         if token in DIGEST_TOPIC_STOPWORDS:
@@ -3198,7 +3226,8 @@ def same_digest_topic(
     cluster: DigestTopicCluster
 ) -> bool:
     if keys and cluster.topic_keys:
-        return bool(keys.intersection(cluster.topic_keys))
+        if keys.intersection(cluster.topic_keys):
+            return True
 
     if not tokens or not cluster.representative_tokens:
         return False

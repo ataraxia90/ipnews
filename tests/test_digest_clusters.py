@@ -62,7 +62,7 @@ class DigestClusterSelectionTest(unittest.TestCase):
             "Official patent policy update",
             "official-policy",
             62,
-            source="미국 특허상표청(USPTO)",
+            source="USPTO",
             url="https://www.uspto.gov/news/official-policy-update",
         )
         direct = analyzed_article(
@@ -136,8 +136,69 @@ class DigestClusterSelectionTest(unittest.TestCase):
 
         digest = render_telegram_digest(selected, run_date="2026-05-02")
 
-        self.assertNotIn("관련:", digest)
-        self.assertNotIn("1건", digest)
+        self.assertNotIn("related", digest.lower())
+        self.assertNotIn("1 item", digest.lower())
+
+    def test_same_title_clusters_even_when_topic_keys_differ(self):
+        items = [
+            analyzed_article(
+                "USPTO achieves significant progress in reducing patent application Notice of Allowance mailing pendency",
+                "uspto-noa-pendency-reduction-2026",
+                62,
+                source="USPTO Subscription Center",
+                url="https://www.uspto.gov/subscription-center/2026/uspto-achieves-significant-progress-reducing-patent-application-notice",
+            ),
+            analyzed_article(
+                "USPTO achieves significant progress in reducing patent application Notice of Allowance mailing pendency",
+                "uspto-noa-mailing-pendency-reduction",
+                58,
+                source="USPTO GovDelivery",
+                url="https://content.govdelivery.com/accounts/USPTO/bulletins/417db99",
+            ),
+        ]
+
+        selected, skipped = select_digest_clusters(
+            items,
+            top_n=5,
+            min_importance=0,
+            sent_topics=[],
+            recent_topic_days=0,
+            run_date="2026-05-29",
+        )
+
+        self.assertEqual(skipped, [])
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(len(selected[0].items), 2)
+
+    def test_topic_key_mismatch_falls_back_to_token_similarity(self):
+        items = [
+            analyzed_article(
+                "USPTO reduces Notice of Allowance mailing pendency for patent applications",
+                "uspto-noa-pendency-reduction-2026",
+                62,
+                source="USPTO Subscription Center",
+                url="https://www.uspto.gov/subscription-center/noa-pendency",
+            ),
+            analyzed_article(
+                "USPTO cuts patent application Notice of Allowance mailing pendency",
+                "uspto-noa-mailing-pendency-reduction",
+                58,
+                source="USPTO GovDelivery",
+                url="https://content.govdelivery.com/accounts/USPTO/bulletins/noa",
+            ),
+        ]
+
+        selected, _ = select_digest_clusters(
+            items,
+            top_n=5,
+            min_importance=0,
+            sent_topics=[],
+            recent_topic_days=0,
+            run_date="2026-05-29",
+        )
+
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(len(selected[0].items), 2)
 
     def test_send_telegram_messages_returns_digest_chunk_count(self):
         cfg = {"telegram": {"digest_send_enabled": False}}
