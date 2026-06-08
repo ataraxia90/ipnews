@@ -200,6 +200,86 @@ class DigestClusterSelectionTest(unittest.TestCase):
         self.assertEqual(len(selected), 1)
         self.assertEqual(len(selected[0].items), 2)
 
+    def test_recent_sent_topic_suppresses_same_issue_by_token_similarity(self):
+        item = analyzed_article(
+            "USTR launches Vietnam IP enforcement investigation",
+            "ustr-section301-vietnam-ip-2025",
+            74,
+            source="mlex",
+            url="https://www.mlex.com/mlex/intellectual-property/articles/2484121",
+        )
+        item.summary_ko = (
+            "USTR opened a Section 301 investigation into Vietnam's intellectual property "
+            "protection and enforcement practices."
+        )
+        item.topic_label = "USTR Section 301 Vietnam IP enforcement investigation"
+        sent_topics = [
+            {
+                "topic_key": "2026-ustr-section301-vietnam-ip",
+                "topic_label": "USTR 2026 Section 301 Vietnam IP investigation",
+                "representative_title": (
+                    "USTR Announces Section 301 Investigation of Vietnam's Acts, "
+                    "Policies, and Practices Related to Intellectual Property Protection"
+                ),
+                "last_sent_date": "2026-06-01",
+                "representative_score": 78,
+                "representative_authority": 4,
+            }
+        ]
+
+        selected, skipped = select_digest_clusters(
+            [item],
+            top_n=5,
+            min_importance=0,
+            sent_topics=sent_topics,
+            recent_topic_days=3,
+            run_date="2026-06-02",
+            max_paid_sources=3,
+        )
+
+        self.assertEqual(selected, [])
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(skipped[0]["reason"], "recent_topic")
+
+    def test_recent_sent_topic_keeps_followup_full_text_release(self):
+        item = analyzed_article(
+            "6月1日起施行！《商业秘密保护规定》全文发布",
+            "china-trade-secret-protection-rules-full-text",
+            74,
+            source="IPRdaily",
+            url="https://www.iprdaily.cn/article/full-text-trade-secret-rules",
+        )
+        item.summary_ko = "중국 상업비밀 보호 규정의 전문이 공개되었다."
+        item.topic_label = "商业秘密保护规定 全文"
+        sent_topics = [
+            {
+                "topic_key": "china-ip-new-rules-june-2026",
+                "topic_label": "2026년 6월 시행 중국 지식재산 신규 규정 모음",
+                "representative_title": "2026.6.1日起！这些知识产权新规正式实施",
+                "representative_tokens": [
+                    "2026", "知识产权", "新规", "商业秘密", "保护", "规定", "施行"
+                ],
+                "last_sent_date": "2026-06-02",
+                "representative_score": 72,
+                "representative_authority": 3,
+                "representative_region": "Test Region",
+            }
+        ]
+
+        selected, skipped = select_digest_clusters(
+            [item],
+            top_n=5,
+            min_importance=0,
+            sent_topics=sent_topics,
+            recent_topic_days=3,
+            run_date="2026-06-04",
+            max_paid_sources=3,
+        )
+
+        self.assertEqual(skipped, [])
+        self.assertEqual(len(selected), 1)
+        self.assertEqual(selected[0].representative.title, item.title)
+
     def test_send_telegram_messages_returns_digest_chunk_count(self):
         cfg = {"telegram": {"digest_send_enabled": False}}
         text = "IP Digest - 2026-05-02 top 1\n\n" + ("a" * 3600)

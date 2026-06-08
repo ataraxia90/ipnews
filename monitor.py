@@ -3150,6 +3150,18 @@ def digest_normalized_title_key(title: str) -> str:
     return key if len(key) >= 20 else ""
 
 
+def digest_topic_token_set_from_text(text: str) -> set:
+    normalized = normalize_topic_text(text or "")
+    tokens = set()
+    for token in normalized.split():
+        if token in DIGEST_TOPIC_STOPWORDS:
+            continue
+        if len(token) < 3 and not token.isdigit():
+            continue
+        tokens.add(token)
+    return tokens
+
+
 def is_uspto_distribution_item(item: AnalyzedArticle) -> bool:
     source = normalize_topic_text(item.source or "")
     url = (item.url or "").lower()
@@ -3206,18 +3218,42 @@ def extract_digest_topic_keys(item: AnalyzedArticle) -> set:
 
 
 def extract_digest_topic_tokens(item: AnalyzedArticle) -> set:
-    text = normalize_topic_text(" ".join([
+    return digest_topic_token_set_from_text(" ".join([
         item.title or "",
         getattr(item, "topic_label", "") or "",
     ]))
-    tokens = set()
-    for token in text.split():
-        if token in DIGEST_TOPIC_STOPWORDS:
-            continue
-        if len(token) < 3 and not token.isdigit():
-            continue
-        tokens.add(token)
-    return tokens
+
+
+def extract_recent_digest_topic_tokens(item: AnalyzedArticle) -> set:
+    return digest_topic_token_set_from_text(" ".join([
+        item.title or "",
+        getattr(item, "topic_key", "") or "",
+        getattr(item, "topic_label", "") or "",
+        item.summary_ko or "",
+        item.raw_excerpt or "",
+    ]))
+
+
+def digest_token_similarity_match(tokens: set, other_tokens: set) -> bool:
+    if not tokens or not other_tokens:
+        return False
+    intersection = tokens.intersection(other_tokens)
+    union = tokens.union(other_tokens)
+    jaccard = len(intersection) / len(union) if union else 0
+    overlap = len(intersection) / min(len(tokens), len(other_tokens))
+    return len(intersection) >= 4 and (jaccard >= 0.35 or overlap >= 0.5)
+
+
+def digest_recent_token_similarity_match(tokens: set, other_tokens: set) -> bool:
+    if digest_token_similarity_match(tokens, other_tokens):
+        return True
+    if not tokens or not other_tokens:
+        return False
+    intersection = tokens.intersection(other_tokens)
+    union = tokens.union(other_tokens)
+    jaccard = len(intersection) / len(union) if union else 0
+    overlap = len(intersection) / min(len(tokens), len(other_tokens))
+    return len(intersection) >= 3 and (jaccard >= 0.18 or overlap >= 0.25)
 
 
 def same_digest_topic(
@@ -3232,10 +3268,7 @@ def same_digest_topic(
     if not tokens or not cluster.representative_tokens:
         return False
 
-    intersection = tokens.intersection(cluster.representative_tokens)
-    union = tokens.union(cluster.representative_tokens)
-    jaccard = len(intersection) / len(union) if union else 0
-    return len(intersection) >= 4 and jaccard >= 0.45
+    return digest_token_similarity_match(tokens, cluster.representative_tokens)
 
 
 def cluster_digest_topics(items: List[AnalyzedArticle]) -> List[DigestTopicCluster]:
@@ -3409,18 +3442,36 @@ def has_substantial_update_signal(cluster: DigestTopicCluster) -> bool:
     return any(keyword in text for keyword in update_keywords)
 
 
+def has_detail_full_text_release_signal(cluster: DigestTopicCluster) -> bool:
+    text = normalize_topic_text(" ".join(
+        f"{item.title} {item.summary_ko} {getattr(item, 'topic_label', '')}"
+        for item in cluster.items
+    ))
+    detail_keywords = [
+        "full text", "全文", "전문", "full version", "complete text",
+        "guidelines", "regulation", "rules", "measures", "办法", "规定", "指南",
+        "contract template", "model text", "示范文本", "표준문본", "계약서",
+    ]
+    collection_keywords = [
+        "roundup", "digest", "summary", "overview", "list", "collection",
+        "合集", "汇总", "一览", "모음", "정리", "요약",
+    ]
+    has_detail = any(keyword in text for keyword in detail_keywords)
+    has_collection = any(keyword in text for keyword in collection_keywords)
+    if has_detail and not has_collection:
+        return True
+    return has_detail and "全文" in text
+
+
 def should_suppress_recent_digest_topic(
     cluster: DigestTopicCluster,
     sent_topic: Optional[Dict[str, Any]],
     run_date: str,
     recent_days: int
 ) -> bool:
-    # Duplicate suppression is intentionally disabled by current operating policy:
-    # send digest candidates regardless of whether the same issue was sent recently.
-    return False
-
-    # Previous policy kept for reference.
     if not sent_topic:
+        return False
+    if recent_days <= 0:
         return False
 
     last_sent = parse_iso_date(str(sent_topic.get("last_sent_date", "")))
@@ -3429,6 +3480,9 @@ def should_suppress_recent_digest_topic(
         return False
 
     if current - last_sent > timedelta(days=recent_days):
+        return False
+
+    if has_detail_full_text_release_signal(cluster):
         return False
 
     previous_score = int(sent_topic.get("representative_score") or 0)
@@ -3446,6 +3500,81 @@ def should_suppress_recent_digest_topic(
     return True
 
 
+def sent_topic_tokens(sent_topic: Dict[str, Any]) -> set:
+    stored = sent_topic.get("representative_tokens")
+    if isinstance(stored, list):
+        return {
+            str(token)
+            for token in stored
+            if str(token).strip()
+        }
+    return digest_topic_token_set_from_text(" ".join([
+        str(sent_topic.get("topic_key", "")),
+        str(sent_topic.get("topic_label", "")),
+        str(sent_topic.get("representative_title", "")),
+    ]))
+
+
+def digest_region_set(value: str) -> set:
+    text = re.sub(r'\s*\(출처지역:[^)]*\)\s*$', '', value or "").strip()
+    if not text:
+        return set()
+    parts = re.split(r'\s*[·/,]\s*|\s+and\s+', text)
+    return {part.strip().lower() for part in parts if part.strip()}
+
+
+def digest_cluster_region_set(cluster: DigestTopicCluster) -> set:
+    return digest_region_set(getattr(cluster.representative, "issue_region", "") or cluster.representative.region or "")
+
+
+def sent_topic_region_set(sent_topic: Dict[str, Any]) -> set:
+    return digest_region_set(
+        str(
+            sent_topic.get("representative_issue_region")
+            or sent_topic.get("issue_region")
+            or sent_topic.get("representative_region")
+            or ""
+        )
+    )
+
+
+def sent_topic_matches_cluster(sent_topic: Dict[str, Any], cluster: DigestTopicCluster) -> bool:
+    sent_key = normalize_topic_key(str(sent_topic.get("topic_key", "")))
+    cluster_key = digest_cluster_topic_key(cluster)
+    if sent_key and cluster_key and sent_key == cluster_key:
+        return True
+
+    stored_keys = sent_topic.get("topic_keys")
+    if isinstance(stored_keys, list):
+        sent_keys = {str(key).strip() for key in stored_keys if str(key).strip()}
+        if sent_keys.intersection({str(key) for key in cluster.topic_keys}):
+            return True
+
+    sent_regions = sent_topic_region_set(sent_topic)
+    cluster_regions = digest_cluster_region_set(cluster)
+    if sent_regions and cluster_regions and not sent_regions.intersection(cluster_regions):
+        return False
+
+    return digest_recent_token_similarity_match(
+        extract_recent_digest_topic_tokens(cluster.representative),
+        sent_topic_tokens(sent_topic),
+    )
+
+
+def find_recent_sent_topic(
+    cluster: DigestTopicCluster,
+    sent_topics: List[Dict[str, Any]],
+    run_date: str,
+    recent_topic_days: int,
+) -> Optional[Dict[str, Any]]:
+    for sent_topic in sent_topics:
+        if not sent_topic_matches_cluster(sent_topic, cluster):
+            continue
+        if should_suppress_recent_digest_topic(cluster, sent_topic, run_date, recent_topic_days):
+            return sent_topic
+    return None
+
+
 def select_digest_clusters(
     analyzed: List[AnalyzedArticle],
     top_n: int = 5,
@@ -3459,17 +3588,26 @@ def select_digest_clusters(
     filtered = [x for x in analyzed if x.importance_score >= min_importance]
     topic_clusters = cluster_digest_topics(filtered)
     run_date = run_date or local_run_date()
-    # Duplicate suppression via sent_digest_topics is disabled. Keep the
-    # parameters for compatibility, but do not use them to skip candidates.
 
     selected = []
     skipped = []
     paid_count = 0
     for cluster in topic_clusters:
+        topic_key = digest_cluster_topic_key(cluster)
+        sent_topic = find_recent_sent_topic(cluster, sent_topics or [], run_date, recent_topic_days)
+        if sent_topic:
+            skipped.append({
+                "topic_key": topic_key,
+                "title": cluster.representative.title,
+                "source": cluster.representative.source,
+                "reason": "recent_topic",
+                "last_sent_date": sent_topic.get("last_sent_date"),
+            })
+            continue
         is_paid = is_paid_digest_source(cluster.representative.source, cluster.representative.url)
         if is_paid and paid_count >= max_paid_sources:
             skipped.append({
-                "topic_key": digest_cluster_topic_key(cluster),
+                "topic_key": topic_key,
                 "title": cluster.representative.title,
                 "source": cluster.representative.source,
                 "reason": "paid_source_limit",
@@ -3506,11 +3644,15 @@ def update_sent_digest_topics(
         index[topic_key] = {
             "topic_key": topic_key,
             "topic_label": getattr(item, "topic_label", "") or existing.get("topic_label", ""),
+            "topic_keys": sorted(str(key) for key in cluster.topic_keys if str(key).strip()),
+            "representative_tokens": sorted(extract_recent_digest_topic_tokens(item)),
             "first_sent_date": existing.get("first_sent_date") or run_date,
             "last_sent_date": run_date,
             "representative_url": item.url,
             "representative_title": item.title,
             "representative_source": item.source,
+            "representative_region": item.region,
+            "representative_issue_region": getattr(item, "issue_region", "") or item.region,
             "representative_score": item.importance_score,
             "representative_authority": digest_source_authority_score(item),
             "sent_count": int(existing.get("sent_count") or 0) + 1,
@@ -5109,6 +5251,9 @@ def main():
     run_log["summary"]["digest_selection_skipped_count"] = len(digest_selection_skips)
     run_log["summary"]["digest_paid_source_skipped_count"] = sum(
         1 for item in digest_selection_skips if item.get("reason") == "paid_source_limit"
+    )
+    run_log["summary"]["digest_recent_topic_skipped_count"] = sum(
+        1 for item in digest_selection_skips if item.get("reason") == "recent_topic"
     )
     run_log["digest_selection_skips"] = digest_selection_skips[:100]
 
