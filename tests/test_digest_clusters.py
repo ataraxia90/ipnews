@@ -139,6 +139,29 @@ class DigestClusterSelectionTest(unittest.TestCase):
         self.assertNotIn("related", digest.lower())
         self.assertNotIn("1 item", digest.lower())
 
+    def test_digest_places_full_results_link_at_bottom_with_count(self):
+        items = [analyzed_article("Issue A", "issue-a", 95)]
+        selected, _ = select_digest_clusters(
+            items,
+            top_n=5,
+            min_importance=0,
+            sent_topics=[],
+            recent_topic_days=0,
+            run_date="2026-05-02",
+        )
+
+        digest = render_telegram_digest(
+            selected,
+            run_date="2026-05-02",
+            full_results_url="https://notion.example/full",
+            full_results_count=12,
+        )
+        lines = [line for line in digest.splitlines() if line.strip()]
+
+        self.assertIn("📄 전체 분석결과 보기(총 12건)", digest)
+        self.assertEqual(lines[-2], "📄 전체 분석결과 보기(총 12건)")
+        self.assertEqual(lines[-1], "https://notion.example/full")
+
     def test_same_title_clusters_even_when_topic_keys_differ(self):
         items = [
             analyzed_article(

@@ -3672,6 +3672,7 @@ def render_telegram_digest(
     selected_clusters: List[DigestTopicCluster],
     run_date: Optional[str] = None,
     full_results_url: Optional[str] = None,
+    full_results_count: Optional[int] = None,
 ) -> str:
     lines = []
     if run_date:
@@ -3686,39 +3687,42 @@ def render_telegram_digest(
     lines.append("")
     lines.append(
         "※ 안내: AI가 생성한 참고용 요약이므로, 정확한 내용은 반드시 원문을 확인해 주시기 바랍니다. "
-        "중요도순으로 상위 5건의 내용만 제공되며, 아래 링크에서 전체 결과를 확인할 수 있습니다."
+        "중요도순으로 상위 5건의 내용만 제공되며, 메시지 하단에서 전체 결과를 확인할 수 있습니다."
 
     )
-    lines.append("")
-    if full_results_url:
-        lines.append(f"전체 분석결과: {full_results_url}")
     lines.append("")
 
     if not selected_clusters:
         lines.append("오늘은 기준 점수 이상 신규 동향이 없습니다.")
-        return "\n".join(lines)
+    else:
+        for i, cluster in enumerate(selected_clusters, start=1):
+            item = cluster.representative
+            title = compact_digest_text(item.title, max_chars=120)
+            region_label = digest_region_label(item)
+            lines.append(f"{i}. {title}")
+            source_label = digest_source_label(item.source)
+            if is_paid_digest_source(item.source, item.url):
+                source_label = f"{source_label} 🔒"
+            lines.append(f"{digest_region_icon(region_label)} {region_label} | 📰 {source_label} | 🏷 {item.category}")
+            lines.append("")
+            digest_bullets = getattr(item, "digest_bullets", None) or []
+            if item.summary_ko:
+                lines.append("📝 요약")
+                lines.append(compact_digest_text(item.summary_ko, max_chars=160))
+                lines.append("")
+            if digest_bullets:
+                for bullet in digest_bullets[:3]:
+                    lines.append(f"• {compact_digest_text(bullet, max_chars=180)}")
+                lines.append("")
+            link_label = "원문(구독 필요)" if is_paid_digest_source(item.source, item.url) else "원문"
+            lines.append(f"🔗 {link_label}: {item.url}")
+            lines.append("")
 
-    for i, cluster in enumerate(selected_clusters, start=1):
-        item = cluster.representative
-        title = compact_digest_text(item.title, max_chars=120)
-        region_label = digest_region_label(item)
-        lines.append(f"{i}. {title}")
-        source_label = digest_source_label(item.source)
-        if is_paid_digest_source(item.source, item.url):
-            source_label = f"{source_label} 🔒"
-        lines.append(f"{digest_region_icon(region_label)} {region_label} | 📰 {source_label} | 🏷 {item.category}")
-        lines.append("")
-        digest_bullets = getattr(item, "digest_bullets", None) or []
-        if item.summary_ko:
-            lines.append("📝 요약")
-            lines.append(compact_digest_text(item.summary_ko, max_chars=160))
-            lines.append("")
-        if digest_bullets:
-            for bullet in digest_bullets[:3]:
-                lines.append(f"• {compact_digest_text(bullet, max_chars=180)}")
-            lines.append("")
-        link_label = "원문(구독 필요)" if is_paid_digest_source(item.source, item.url) else "원문"
-        lines.append(f"🔗 {link_label}: {item.url}")
+    if full_results_url:
+        count_label = f"총 {full_results_count}건" if full_results_count is not None else "전체"
+        lines.append("---")
+        lines.append(f"📄 전체 분석결과 보기({count_label})")
+        lines.append(full_results_url)
         lines.append("")
 
     return "\n".join(lines)
@@ -3736,7 +3740,12 @@ def build_telegram_digest(
         top_n=top_n,
         min_importance=min_importance,
     )
-    return render_telegram_digest(selected_clusters, run_date=run_date, full_results_url=full_results_url)
+    return render_telegram_digest(
+        selected_clusters,
+        run_date=run_date,
+        full_results_url=full_results_url,
+        full_results_count=len(analyzed),
+    )
 
 
 def save_digest(text: str):
@@ -5277,6 +5286,7 @@ def main():
         selected_digest_clusters,
         run_date=digest_run_date,
         full_results_url=notion_page_url,
+        full_results_count=len(analyzed_items),
     )
     save_digest(digest_text)
     run_log["summary"]["digest_saved"] = True
