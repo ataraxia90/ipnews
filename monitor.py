@@ -2797,6 +2797,29 @@ def clamp_score_axis(value: Any, default: int = 0) -> int:
     return max(0, min(100, score))
 
 
+def apply_importance_score_guardrails(
+    importance_score: int,
+    ip_directness: int,
+    policy_materiality: int,
+    score_reason: str = "",
+) -> tuple[int, str]:
+    adjusted = max(0, min(100, int(importance_score or 0)))
+    reason = str(score_reason or "").strip()
+    notes = []
+
+    if ip_directness < 30 and adjusted > 40:
+        adjusted = 40
+        notes.append("IP 직접성이 30 미만이므로 최종 점수를 40점 이하로 보정했다.")
+    elif ip_directness < 50 and policy_materiality < 50 and adjusted > 55:
+        adjusted = 55
+        notes.append("IP 직접성과 정책 실질성이 모두 낮아 최종 점수를 55점 이하로 보정했다.")
+
+    if notes:
+        reason = f"{reason} {' '.join(notes)}".strip()
+
+    return adjusted, reason
+
+
 class ClaudeClient:
     def __init__(self, model: str = 'claude-sonnet-4-6'):
         api_key = os.getenv('ANTHROPIC_API_KEY')
@@ -2841,6 +2864,8 @@ class ClaudeClient:
    - korea_relevance: 한국 또는 지식재산처(MOIP), 한국 기업, 한국 제도에 직접 참고할 만한 정도가 얼마나 높은가.
    - timeliness: 최근성·긴급성·후속 조치 필요성이 얼마나 높은가.
    - 최종 importance_score는 위 축을 종합하되, source_authority만 높고 ip_directness나 policy_materiality가 낮으면 높은 점수를 주지 마라.
+   - ip_directness가 30 미만이면, 한국 직접 언급·공식기관 출처·무역규제성·시의성만으로 importance_score를 40점 초과로 올리지 마라.
+   - ip_directness와 policy_materiality가 모두 50 미만이면, 명확한 IP 제도·권리·집행·라이선스·분쟁 변화가 없는 한 importance_score를 55점 초과로 올리지 마라.
    - "Technology", "innovation", "AI", "digital" 같은 일반 기술 키워드만으로 IP 중요도를 높이지 말고, IP 제도·권리·집행·라이선스·분쟁과의 직접 연결을 확인하라.
    - 2차 출처라도 USPTO/PTAB/IPR/Director Review/Inter Partes Review처럼 특허심판·심사 실무 변화가 직접 드러나면 ip_directness와 policy_materiality를 높게 평가할 수 있다.
    - score_reason에는 최종 점수의 핵심 이유를 1문장으로 쓰되, 어떤 축이 높고 낮았는지 드러나게 하라.
@@ -2947,6 +2972,12 @@ JSON으로만 응답하라:
         korea_relevance = clamp_score_axis(data.get("korea_relevance"))
         timeliness = clamp_score_axis(data.get("timeliness"))
         score_reason = normalize_korean_policy_terms(str(data.get("score_reason", "")).strip())
+        importance, score_reason = apply_importance_score_guardrails(
+            importance,
+            ip_directness,
+            policy_materiality,
+            score_reason,
+        )
 
         category = str(data.get('category', '기타')).strip() or '기타'
         summary_ko = normalize_korean_policy_terms(str(data.get('summary_ko', '')).strip())
