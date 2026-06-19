@@ -23,6 +23,11 @@ from playwright_stealth import Stealth
 
 load_dotenv()
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 LOCAL_TZ = ZoneInfo("Asia/Seoul")
 
 @dataclass
@@ -93,10 +98,35 @@ RESULTS_PATH = 'data/results.json'
 DAILY_RESULTS_DIR = 'data/daily_results'
 SENT_DIGEST_TOPICS_PATH = 'data/sent_digest_topics.json'
 DIGEST_PATH = 'data/telegram_digest.txt'
+WEEKLY_DIGEST_PATH = 'data/telegram_weekly_digest.txt'
+SENT_WEEKLY_DIGESTS_PATH = 'data/sent_weekly_digests.json'
 RAW_REVIEW_DIGEST_PATH = 'data/telegram_raw_review.txt'
 SOURCE_CHECK_REPORT_PATH = 'data/source_check_report.json'
 NOTION_PAGES_PATH = 'data/notion_pages.json'
 NOTION_VERSION = '2025-09-03'
+IP_GLOSSARY_PATH = os.getenv('IP_GLOSSARY_PATH', 'data/ip_glossary_en_ko.json')
+IP_GLOSSARY_FALLBACK_PATH = r'C:\Users\20170007\Downloads\ip_glossary_en_ko.json'
+IP_GLOSSARY_MAX_PROMPT_TERMS = 40
+IP_GLOSSARY_AMBIGUOUS_SINGLE_TERMS = {
+    "act",
+    "article",
+    "case",
+    "claim",
+    "claims",
+    "class",
+    "classes",
+    "date",
+    "drawing",
+    "drawings",
+    "goods",
+    "matter",
+    "priority",
+    "right",
+    "rights",
+    "service",
+    "services",
+    "use",
+}
 
 # Standard Claude Sonnet API pricing, USD per million tokens.
 # The current prompt does not use prompt caching, but cache fields are recorded
@@ -119,9 +149,11 @@ SUPABASE_STATE_TABLE = 'monitor_state'
 SUPABASE_SEEN_KEY = 'seen_urls'
 SUPABASE_RESULTS_KEY = 'analysis_results'
 SUPABASE_SENT_DIGEST_TOPICS_KEY = 'sent_digest_topics'
+SUPABASE_SENT_WEEKLY_DIGESTS_KEY = 'sent_weekly_digests'
 SUPABASE_NOTION_PAGES_KEY = 'notion_pages'
 SUPABASE_RAW_REVIEW_MESSAGES_KEY = 'telegram_raw_review'
 SUPABASE_DIGEST_MESSAGE_KEY = 'telegram_digest'
+SUPABASE_WEEKLY_DIGEST_MESSAGE_KEY = 'telegram_weekly_digest'
 SUPABASE_RUN_LOG_PREFIX = 'run_log'
 SUPABASE_LATEST_RUN_LOG_KEY = 'run_log_latest'
 
@@ -1092,6 +1124,15 @@ def supabase_headers(cfg: Dict[str, str], prefer: Optional[str] = None) -> Dict[
     return headers
 
 
+def supabase_request(method: str, url: str, **kwargs) -> requests.Response:
+    try:
+        return requests.request(method, url, **kwargs)
+    except requests.exceptions.ProxyError:
+        session = requests.Session()
+        session.trust_env = False
+        return session.request(method, url, **kwargs)
+
+
 def load_supabase_state(key: str) -> Optional[Any]:
     cfg = supabase_config()
     if not cfg:
@@ -1099,7 +1140,8 @@ def load_supabase_state(key: str) -> Optional[Any]:
 
     endpoint = f"{cfg['url']}/rest/v1/{SUPABASE_STATE_TABLE}"
     try:
-        resp = requests.get(
+        resp = supabase_request(
+            "GET",
             endpoint,
             headers=supabase_headers(cfg),
             params={"key": f"eq.{key}", "select": "value"},
@@ -1131,7 +1173,8 @@ def save_supabase_state(key: str, value: Any) -> bool:
         "value": value,
     }
     try:
-        resp = requests.post(
+        resp = supabase_request(
+            "POST",
             endpoint,
             headers=supabase_headers(cfg, prefer="resolution=merge-duplicates,return=minimal"),
             params={"on_conflict": "key"},
@@ -1254,6 +1297,208 @@ def save_daily_results(items: List[Dict[str, Any]], run_id: str) -> Optional[str
         print(f"Supabase {daily_key} 저장: {len(daily_items)}개")
 
     return path
+
+
+def daily_results_path_for_date(date_text: str) -> str:
+    compact_date = str(date_text or "").replace("-", "")
+    return os.path.join(DAILY_RESULTS_DIR, f"results_{compact_date}.json")
+
+
+def load_daily_results_for_date(date_text: str) -> List[Dict[str, Any]]:
+    state_key = f"{SUPABASE_RESULTS_KEY}_{str(date_text or '').replace('-', '')}"
+    remote = load_supabase_state(state_key)
+    if isinstance(remote, list):
+        print(f"Supabase {state_key} 로드: {len(remote)}개")
+        return [item for item in remote if isinstance(item, dict)]
+    if isinstance(remote, dict) and isinstance(remote.get("items"), list):
+        items = remote["items"]
+        print(f"Supabase {state_key} 로드: {len(items)}개")
+        return [item for item in items if isinstance(item, dict)]
+    return []
+
+
+def analyzed_article_from_dict(item: Dict[str, Any]) -> Optional[AnalyzedArticle]:
+    if not isinstance(item, dict):
+        return None
+    if not item.get("url") or not item.get("title"):
+        return None
+    try:
+        return AnalyzedArticle(
+            source=str(item.get("source") or ""),
+            region=str(item.get("region") or ""),
+            title=str(item.get("title") or ""),
+            url=canonical_article_url(str(item.get("url") or "")),
+            published=item.get("published"),
+            summary_ko=str(item.get("summary_ko") or ""),
+            importance_score=int(item.get("importance_score") or 0),
+            category=str(item.get("category") or ""),
+            key_points=[
+                str(point)
+                for point in (item.get("key_points") or [])
+                if str(point).strip()
+            ],
+            raw_excerpt=str(item.get("raw_excerpt") or ""),
+            topic_key=str(item.get("topic_key") or ""),
+            topic_label=str(item.get("topic_label") or ""),
+            issue_region=str(item.get("issue_region") or ""),
+            digest_bullets=[
+                str(point)
+                for point in (item.get("digest_bullets") or [])
+                if str(point).strip()
+            ] or None,
+            ip_directness=int(item.get("ip_directness") or 0),
+            policy_materiality=int(item.get("policy_materiality") or 0),
+            source_authority=int(item.get("source_authority") or 0),
+            korea_relevance=int(item.get("korea_relevance") or 0),
+            timeliness=int(item.get("timeliness") or 0),
+            score_reason=str(item.get("score_reason") or ""),
+            claude_model=str(item.get("claude_model") or ""),
+            claude_input_tokens=int(item.get("claude_input_tokens") or 0),
+            claude_output_tokens=int(item.get("claude_output_tokens") or 0),
+            claude_cache_creation_input_tokens=int(item.get("claude_cache_creation_input_tokens") or 0),
+            claude_cache_read_input_tokens=int(item.get("claude_cache_read_input_tokens") or 0),
+            claude_estimated_cost_usd=float(item.get("claude_estimated_cost_usd") or 0.0),
+        )
+    except Exception as e:
+        print(f"분석결과 변환 실패: {item.get('url', '')} ({e})")
+        return None
+
+
+def week_range_for_date(date_text: Optional[str] = None) -> tuple:
+    base = parse_iso_date(date_text or local_run_date()) or local_datetime()
+    week_start = base - timedelta(days=base.weekday())
+    week_end = week_start + timedelta(days=4)
+    return (
+        week_start.strftime("%Y-%m-%d"),
+        week_end.strftime("%Y-%m-%d"),
+    )
+
+
+def weekday_dates_between(start_date: str, end_date: str) -> List[str]:
+    start = parse_iso_date(start_date)
+    end = parse_iso_date(end_date)
+    if not start or not end:
+        return []
+    dates = []
+    cur = start
+    while cur <= end:
+        if cur.weekday() < 5:
+            dates.append(cur.strftime("%Y-%m-%d"))
+        cur += timedelta(days=1)
+    return dates
+
+
+def load_weekly_analyzed_articles(start_date: str, end_date: str) -> tuple:
+    merged: Dict[str, AnalyzedArticle] = {}
+    daily_counts: Dict[str, int] = {}
+    for date_text in weekday_dates_between(start_date, end_date):
+        raw_items = load_daily_results_for_date(date_text)
+        daily_counts[date_text] = len(raw_items)
+        for raw in raw_items:
+            article = analyzed_article_from_dict(raw)
+            if not article:
+                continue
+            existing = merged.get(article.url)
+            if not existing or article.importance_score > existing.importance_score:
+                merged[article.url] = article
+
+    items = sorted(
+        merged.values(),
+        key=lambda item: (
+            item.importance_score,
+            item.timeliness,
+            item.policy_materiality,
+            item.source_authority,
+            item.published or "",
+        ),
+        reverse=True,
+    )
+    return items, daily_counts
+
+
+def render_weekly_telegram_digest(
+    selected_clusters: List[DigestTopicCluster],
+    week_start: str,
+    week_end: str,
+    full_results_count: Optional[int] = None,
+) -> str:
+    lines = []
+    lines.append(f"< {week_start}~{week_end} 주간 IP 브리핑 Top 5 >")
+    lines.append("")
+    lines.append(
+        "※ 안내: 평일에 분석된 동향 중 중요도 점수가 높은 상위 5건을 모은 주간 요약입니다. "
+        "AI가 생성한 참고용 요약이므로, 정확한 내용은 반드시 원문을 확인해 주시기 바랍니다."
+    )
+    lines.append("")
+
+    if not selected_clusters:
+        lines.append("이번 주에는 집계 가능한 분석 결과가 없습니다.")
+    else:
+        for i, cluster in enumerate(selected_clusters, start=1):
+            item = cluster.representative
+            title = compact_digest_text(item.title, max_chars=120)
+            region_label = digest_region_label(item)
+            source_label = digest_source_label(item.source)
+            if is_paid_digest_source(item.source, item.url):
+                source_label = f"{source_label} 🔒"
+            lines.append(f"{i}. {title}")
+            lines.append(
+                f"{digest_region_icon(region_label)} {region_label} | "
+                f"📰 {source_label} | 🏷 {item.category} | ⭐ {item.importance_score}"
+            )
+            lines.append("")
+            if item.summary_ko:
+                lines.append("📝 요약")
+                lines.append(compact_digest_text(item.summary_ko, max_chars=180))
+                lines.append("")
+            digest_bullets = getattr(item, "digest_bullets", None) or []
+            for bullet in digest_bullets[:3]:
+                lines.append(f"• {compact_digest_text(bullet, max_chars=180)}")
+            if digest_bullets:
+                lines.append("")
+            link_label = "원문(구독 필요)" if is_paid_digest_source(item.source, item.url) else "원문"
+            lines.append(f"🔗 {link_label}: {item.url}")
+            lines.append("")
+
+    if full_results_count is not None:
+        lines.append("---")
+        lines.append(f"집계 대상 분석 결과: 총 {full_results_count}건")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+def save_weekly_digest(text: str):
+    os.makedirs(os.path.dirname(WEEKLY_DIGEST_PATH), exist_ok=True)
+    with open(WEEKLY_DIGEST_PATH, 'w', encoding='utf-8') as f:
+        f.write(text)
+
+
+def load_sent_weekly_digests() -> Dict[str, Any]:
+    remote = load_supabase_state(SUPABASE_SENT_WEEKLY_DIGESTS_KEY)
+    if isinstance(remote, dict):
+        return remote
+    if os.path.exists(SENT_WEEKLY_DIGESTS_PATH):
+        try:
+            with open(SENT_WEEKLY_DIGESTS_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            return {}
+    return {}
+
+
+def save_sent_weekly_digests(items: Dict[str, Any]):
+    os.makedirs(os.path.dirname(SENT_WEEKLY_DIGESTS_PATH), exist_ok=True)
+    with open(SENT_WEEKLY_DIGESTS_PATH, 'w', encoding='utf-8') as f:
+        json.dump(items, f, ensure_ascii=False, indent=2)
+    if save_supabase_state(SUPABASE_SENT_WEEKLY_DIGESTS_KEY, items):
+        print(f"Supabase sent_weekly_digests 저장: {len(items)}개")
+
+
+def weekly_digest_key(week_start: str, week_end: str) -> str:
+    return f"{week_start}_{week_end}"
 
 
 def load_sent_digest_topics() -> List[Dict[str, Any]]:
@@ -2775,6 +3020,100 @@ def fetch_articles_for_source(source: SourceConfig, timeout: int = 20) -> List[A
     return []
 
 
+_IP_GLOSSARY_CACHE: Optional[Dict[str, str]] = None
+_IP_GLOSSARY_CACHE_PATH: Optional[str] = None
+
+
+def ip_glossary_candidate_paths() -> List[str]:
+    paths = []
+    for path in (IP_GLOSSARY_PATH, IP_GLOSSARY_FALLBACK_PATH):
+        text = str(path or "").strip()
+        if text and text not in paths:
+            paths.append(text)
+    return paths
+
+
+def load_ip_glossary() -> Dict[str, str]:
+    global _IP_GLOSSARY_CACHE, _IP_GLOSSARY_CACHE_PATH
+    if _IP_GLOSSARY_CACHE is not None:
+        return _IP_GLOSSARY_CACHE
+
+    for path in ip_glossary_candidate_paths():
+        if not os.path.exists(path):
+            continue
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"IP 용어집 로드 실패({path}): {e}")
+            continue
+        if not isinstance(data, dict):
+            print(f"IP 용어집 형식 오류({path}): JSON object가 아닙니다.")
+            continue
+        _IP_GLOSSARY_CACHE = {
+            str(src).strip(): str(dst).strip()
+            for src, dst in data.items()
+            if str(src).strip() and str(dst).strip()
+        }
+        _IP_GLOSSARY_CACHE_PATH = path
+        print(f"IP 용어집 로드: {path} ({len(_IP_GLOSSARY_CACHE)}개)")
+        return _IP_GLOSSARY_CACHE
+
+    _IP_GLOSSARY_CACHE = {}
+    _IP_GLOSSARY_CACHE_PATH = None
+    return _IP_GLOSSARY_CACHE
+
+
+def glossary_term_matches_text(term: str, text: str) -> bool:
+    normalized_term = re.sub(r"\s+", " ", term or "").strip()
+    if not normalized_term:
+        return False
+    if (
+        normalized_term.lower() in IP_GLOSSARY_AMBIGUOUS_SINGLE_TERMS
+        and re.fullmatch(r"[A-Za-z]+", normalized_term)
+    ):
+        return False
+    escaped = re.escape(normalized_term)
+    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 /()&.,+'-]*", normalized_term):
+        pattern = rf"(?<![A-Za-z0-9]){escaped}(?![A-Za-z0-9])"
+        return bool(re.search(pattern, text, flags=re.IGNORECASE))
+    return normalized_term.lower() in text.lower()
+
+
+def relevant_ip_glossary_terms(art: Article, max_terms: int = IP_GLOSSARY_MAX_PROMPT_TERMS) -> List[tuple[str, str]]:
+    glossary = load_ip_glossary()
+    if not glossary:
+        return []
+
+    text = " ".join([
+        art.title or "",
+        art.summary_raw or "",
+        art.source or "",
+    ])
+    matches = [
+        (src, dst)
+        for src, dst in glossary.items()
+        if glossary_term_matches_text(src, text)
+    ]
+    matches.sort(key=lambda item: (len(item[0]), item[0].lower()), reverse=True)
+    return matches[:max_terms]
+
+
+def render_ip_glossary_prompt(art: Article) -> str:
+    terms = relevant_ip_glossary_terms(art)
+    if not terms:
+        return (
+            "이 기사 텍스트에서 IP 용어집과 직접 일치하는 항목은 찾지 못했다. "
+            "그래도 번역 시 일반 번역보다 프로젝트의 IP 용어집 기준을 우선한다."
+        )
+    lines = [
+        "아래는 ip_glossary_en_ko.json에서 이 기사와 직접 매칭된 용어다.",
+        "한국어 요약, digest_bullets, category, score_reason에서 해당 영어 용어를 번역할 때는 이 번역을 일반 번역보다 우선 적용하라.",
+    ]
+    lines.extend(f"- {src} => {dst}" for src, dst in terms)
+    return "\n".join(lines)
+
+
 def normalize_korean_policy_terms(text: str) -> str:
     if not text:
         return ""
@@ -2844,6 +3183,7 @@ class ClaudeClient:
         return round(cost, 6)
 
     def analyze_article(self, art: Article) -> AnalyzedArticle:
+        glossary_prompt = render_ip_glossary_prompt(art)
         prompt = f"""
 당신은 지식재산(IP) 정책·제도 동향 분석가입니다.
 
@@ -2855,6 +3195,9 @@ class ClaudeClient:
 - 제목: {art.title}
 - URL: {art.url}
 - 원문 요약/발췌(있으면): {art.summary_raw}
+
+[IP 용어집 우선 적용 규칙]
+{glossary_prompt}
 
 요구 사항:
 1. 중요도 점수를 0~100 사이 정수로 매기되, 먼저 아래 5개 평가축을 각각 0~100으로 판단한 뒤 종합하라.
@@ -2908,6 +3251,8 @@ class ClaudeClient:
 추가 규칙:
 - factual summary와 policy implication을 엄격히 분리하라. `summary_ko`와 `digest_bullets`에는 원문에 나타난 사실관계만 넣고, 정책적 시사점·평가·추론은 작성하지 마라.
 - "한국도", "국내 제도", "한국 정책당국" 같은 표현은 원문 직접 언급이 없으면 `summary_ko`에서 금지한다.
+- 영어 IP 용어를 한국어로 옮길 때는 먼저 ip_glossary_en_ko.json 매칭 항목을 확인하고, 매칭된 항목이 있으면 해당 한국어 표현을 우선 사용하라.
+- 용어집 번역과 일반적인 번역 후보가 충돌하면 용어집 번역을 따른다. 단, 문맥상 명백히 다른 고유명사·기관명·인용문이면 원문 의미를 해치지 않는 범위에서 조정할 수 있다.
 - 용어 번역을 일관되게 하라. USPTO의 "Director"는 "청장"으로 번역하고, "원장" 또는 "국장"으로 번역하지 마라.
 - 한국의 지식재산 행정기관은 "한국특허청(KIPO)"이 아니라 "지식재산처(MOIP)"로 표기하라.
 - 이 서비스의 목적은 해외 IP 정책·제도 동향을 한국 정책의사결정자 관점에서 모니터링하는 것이다.
@@ -4817,6 +5162,139 @@ def send_telegram_messages(
     return len(messages)
 
 
+def weekly_digest_reference_date_from_args() -> Optional[str]:
+    for flag in ("--weekly-digest", "--weekly-digest-sample"):
+        if flag not in sys.argv:
+            continue
+        arg_index = sys.argv.index(flag)
+        if len(sys.argv) > arg_index + 1 and not sys.argv[arg_index + 1].startswith("--"):
+            return sys.argv[arg_index + 1]
+    return None
+
+
+def run_weekly_digest(cfg: Dict[str, Any], run_started: float, run_id: str, sample_only: bool = False) -> int:
+    reference_date = weekly_digest_reference_date_from_args()
+    week_start, week_end = week_range_for_date(reference_date)
+    weekly_key = weekly_digest_key(week_start, week_end)
+    top_n = int(cfg.get('analysis', {}).get('weekly_top_n_for_digest', 5) or 5)
+    min_importance = int(cfg.get('analysis', {}).get('weekly_min_importance_for_digest', 0) or 0)
+
+    run_log = {
+        "run_id": run_id,
+        "started_at": local_timestamp(run_started),
+        "finished_at": None,
+        "duration_seconds": None,
+        "mode": "weekly_digest_sample" if sample_only else "weekly_digest",
+        "week_start": week_start,
+        "week_end": week_end,
+        "weekly_digest_key": weekly_key,
+        "summary": {
+            "weekly_digest_saved": False,
+            "weekly_digest_supabase_saved": False,
+            "weekly_digest_telegram_messages": 0,
+            "weekly_digest_sent": False,
+            "weekly_digest_duplicate_skipped": False,
+            "weekly_digest_sample_only": sample_only,
+            "weekly_total_candidates": 0,
+            "weekly_selected_count": 0,
+            "weekly_daily_counts": {},
+        },
+    }
+
+    analyzed_items, daily_counts = load_weekly_analyzed_articles(week_start, week_end)
+    run_log["summary"]["weekly_total_candidates"] = len(analyzed_items)
+    run_log["summary"]["weekly_daily_counts"] = daily_counts
+    selected_clusters, digest_selection_skips = select_digest_clusters(
+        analyzed_items,
+        top_n=top_n,
+        min_importance=min_importance,
+        sent_topics=[],
+        recent_topic_days=0,
+        run_date=week_end,
+        max_paid_sources=top_n,
+    )
+    run_log["summary"]["weekly_selected_count"] = len(selected_clusters)
+    run_log["weekly_digest_selection_skips"] = digest_selection_skips[:100]
+
+    digest_text = render_weekly_telegram_digest(
+        selected_clusters,
+        week_start=week_start,
+        week_end=week_end,
+        full_results_count=len(analyzed_items),
+    )
+    save_weekly_digest(digest_text)
+    run_log["summary"]["weekly_digest_saved"] = True
+    messages = split_telegram_messages(digest_text.splitlines())
+
+    print("")
+    print("=== 주간 텔레그램 발송 전 샘플 ===")
+    print(digest_text)
+    print("=== 샘플 끝 ===")
+    print("")
+    print(f"주간 후보: {len(analyzed_items)}건, 선정: {len(selected_clusters)}건")
+    print(f"저장 경로: {WEEKLY_DIGEST_PATH}")
+
+    if sample_only:
+        run_log["finished_at"] = local_timestamp()
+        run_log["duration_seconds"] = round(time.time() - run_started, 3)
+        log_path = save_run_log(run_log)
+        print(f'[DEBUG] 실행 로그 저장: {log_path}')
+        return 0
+
+    sent_weekly = load_sent_weekly_digests()
+    if sent_weekly.get(weekly_key) and '--force-weekly-digest' not in sys.argv:
+        run_log["summary"]["weekly_digest_duplicate_skipped"] = True
+        print(f"이미 발송된 주간 브리핑이라 건너뜁니다: {weekly_key}")
+        run_log["finished_at"] = local_timestamp()
+        run_log["duration_seconds"] = round(time.time() - run_started, 3)
+        log_path = save_run_log(run_log)
+        print(f'[DEBUG] 실행 로그 저장: {log_path}')
+        return 0
+
+    run_log["summary"]["weekly_digest_supabase_saved"] = save_telegram_messages_state(
+        SUPABASE_WEEKLY_DIGEST_MESSAGE_KEY,
+        run_id,
+        messages,
+        "weekly_digest",
+    )
+
+    tg_cfg = cfg.setdefault("telegram", {})
+    if "weekly_digest_send_enabled" not in tg_cfg:
+        tg_cfg["weekly_digest_send_enabled"] = tg_cfg.get("digest_send_enabled", tg_cfg.get("send_enabled", False))
+
+    weekly_telegram_started = time.time()
+    telegram_messages = send_telegram_messages(
+        digest_text,
+        cfg,
+        chat_id_env='TELEGRAM_DIGEST_CHAT_ID',
+        enabled_key='weekly_digest_send_enabled',
+    )
+    run_log["summary"]["weekly_digest_telegram_messages"] = telegram_messages
+    run_log["summary"]["weekly_digest_telegram_duration_seconds"] = round(
+        time.time() - weekly_telegram_started,
+        3,
+    )
+    if telegram_send_enabled(cfg, 'weekly_digest_send_enabled'):
+        run_log["summary"]["weekly_digest_sent"] = True
+
+    sent_weekly[weekly_key] = {
+        "week_start": week_start,
+        "week_end": week_end,
+        "run_id": run_id,
+        "sent_at": local_timestamp(),
+        "candidate_count": len(analyzed_items),
+        "selected_count": len(selected_clusters),
+        "message_count": telegram_messages,
+    }
+    save_sent_weekly_digests(sent_weekly)
+
+    run_log["finished_at"] = local_timestamp()
+    run_log["duration_seconds"] = round(time.time() - run_started, 3)
+    log_path = save_run_log(run_log)
+    print(f'[DEBUG] 실행 로그 저장: {log_path}')
+    return 0
+
+
 def main():
     if '--load-telegram-digest' in sys.argv:
         arg_index = sys.argv.index('--load-telegram-digest')
@@ -4849,6 +5327,11 @@ def main():
     failed_only = '--failed-only' in sys.argv
     skip_analysis = '--skip-analysis' in sys.argv
     cfg = load_config(config_path)
+
+    if '--weekly-digest' in sys.argv or '--weekly-digest-sample' in sys.argv:
+        sample_only = '--weekly-digest-sample' in sys.argv or '--no-telegram' in sys.argv
+        sys.exit(run_weekly_digest(cfg, run_started, run_id, sample_only=sample_only))
+
     sources = load_sources(cfg)
 
     seen = load_seen()
