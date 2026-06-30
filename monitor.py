@@ -494,6 +494,8 @@ def canonical_article_url(url: str) -> str:
     parsed = urlparse(text)
     host = parsed.netloc.lower()
     path = parsed.path or ""
+    if host == "euipo.europa.eu":
+        return parsed._replace(netloc="www.euipo.europa.eu").geturl()
     if host.endswith("iam-media.com") and path.startswith("/index.php/"):
         path = path.replace("/index.php/", "/", 1)
         return parsed._replace(path=path).geturl()

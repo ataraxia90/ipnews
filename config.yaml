@@ -804,7 +804,7 @@ sources:
 
   - name: EUIPO
     region: 유럽
-    homepage: https://euipo.europa.eu/
+    homepage: https://www.euipo.europa.eu/
     # cURL에서 복사한 URL 주소 (API 키 포함)
     monitor_url: "https://zyn8p9ocp2-3.algolianet.com/1/indexes/ews-en-news/query?x-algolia-agent=Algolia%20for%20JavaScript%20(5.48.1)%3B%20Search%20(5.48.1)%3B%20Browser&x-algolia-api-key=428a6eab6ad825546f741c199084e245&x-algolia-application-id=ZYN8P9OCP2"
     mode: algolia   # <--- 새로운 모드
