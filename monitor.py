@@ -1822,7 +1822,7 @@ def run_daily_watchdog(cfg: Dict[str, Any], run_started: float, watchdog_run_id:
 
     text = (
         "[IP Monitor 관리자 알림]\n"
-        "07:25 KST 점검 결과, 07:00 정규 실행이 07:30 발송 전에 완료되지 않았습니다.\n"
+        "07:20 KST 점검 결과, 06:45 정규 실행이 07:30 발송 전에 완료되지 않았습니다.\n"
         f"watchdog_run_id: {watchdog_run_id}\n"
         f"date: {run_date}\n"
         + "\n".join(detail_lines)

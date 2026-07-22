@@ -3,7 +3,7 @@ services:
     name: ip-monitor-daily
     runtime: docker
     plan: starter
-    schedule: "0 22 * * 0-4"
+    schedule: "45 21 * * 0-4"
     dockerfilePath: ./Dockerfile
     dockerCommand: "python monitor.py"
     envVars:
@@ -39,7 +39,7 @@ services:
     name: ip-monitor-daily-watchdog
     runtime: docker
     plan: starter
-    schedule: "25 22 * * 0-4"
+    schedule: "20 22 * * 0-4"
     dockerfilePath: ./Dockerfile
     dockerCommand: "python monitor.py --daily-watchdog"
     envVars:
