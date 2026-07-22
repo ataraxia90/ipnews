@@ -4,6 +4,8 @@ import json
 import time
 import re
 import html
+import traceback
+import gc
 from xml.etree import ElementTree
 from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
@@ -156,6 +158,7 @@ SUPABASE_DIGEST_MESSAGE_KEY = 'telegram_digest'
 SUPABASE_WEEKLY_DIGEST_MESSAGE_KEY = 'telegram_weekly_digest'
 SUPABASE_RUN_LOG_PREFIX = 'run_log'
 SUPABASE_LATEST_RUN_LOG_KEY = 'run_log_latest'
+SUPABASE_ADMIN_ALERTS_KEY = 'admin_alerts'
 
 # max_items 기반 수집 제한은 seen 적용 전 후보 수를 자르는 방식이라 운영상
 # 의미가 약해졌다. 설정에서는 제거하고 제한 helper도 no-op으로 둔다.
@@ -1642,6 +1645,205 @@ def is_scheduled_run() -> bool:
     return os.getenv("MONITOR_SCHEDULED_RUN", "").lower() in ("1", "true", "yes")
 
 
+def memory_usage_mb() -> Optional[float]:
+    try:
+        if os.name == "posix" and os.path.exists("/proc/self/status"):
+            with open("/proc/self/status", "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            return round(int(parts[1]) / 1024, 1)
+    except Exception:
+        return None
+    return None
+
+
+def memory_usage_label() -> str:
+    usage = memory_usage_mb()
+    return f"{usage} MiB" if usage is not None else "unknown"
+
+
+def load_admin_alerts() -> Dict[str, Any]:
+    remote = load_supabase_state(SUPABASE_ADMIN_ALERTS_KEY)
+    if isinstance(remote, dict):
+        return remote
+    return {"sent": {}}
+
+
+def save_admin_alerts(alerts: Dict[str, Any]) -> bool:
+    if "sent" not in alerts or not isinstance(alerts.get("sent"), dict):
+        alerts["sent"] = {}
+    return save_supabase_state(SUPABASE_ADMIN_ALERTS_KEY, alerts)
+
+
+def admin_alert_enabled(cfg: Dict[str, Any]) -> bool:
+    if '--no-telegram' in sys.argv:
+        return False
+    tg_cfg = cfg.get("telegram", {}) if isinstance(cfg, dict) else {}
+    return truthy_config_value(tg_cfg.get("admin_alert_enabled"), default=True)
+
+
+def send_admin_alert(text: str, cfg: Dict[str, Any]) -> bool:
+    if not admin_alert_enabled(cfg):
+        return False
+
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_ADMIN_CHAT_ID")
+    if not token or not chat_id:
+        print("관리자 알림 텔레그램 토큰 또는 TELEGRAM_ADMIN_CHAT_ID가 없어 발송을 건너뜁니다.")
+        return False
+
+    timeout_seconds = int((cfg.get("telegram", {}) or {}).get("timeout_seconds", 10) or 10)
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    try:
+        resp = requests.post(
+            url,
+            json={
+                "chat_id": chat_id,
+                "text": text[:3500],
+                "disable_web_page_preview": True,
+            },
+            timeout=timeout_seconds,
+        )
+        if not resp.ok:
+            print(f"관리자 알림 전송 실패: {resp.text[:200]}")
+            return False
+        return True
+    except requests.RequestException as e:
+        print(f"관리자 알림 전송 실패: {e.__class__.__name__}")
+        return False
+
+
+def admin_alert_key(kind: str, run_id: str) -> str:
+    return f"{kind}:{run_id}"
+
+
+def send_admin_alert_once(kind: str, run_id: str, text: str, cfg: Dict[str, Any]) -> bool:
+    alerts = load_admin_alerts()
+    sent = alerts.setdefault("sent", {})
+    key = admin_alert_key(kind, run_id)
+    if sent.get(key):
+        return False
+
+    delivered = send_admin_alert(text, cfg)
+    if delivered:
+        sent[key] = {
+            "sent_at": local_timestamp(),
+            "kind": kind,
+            "run_id": run_id,
+        }
+        # Keep the state small; old alert ids are only for duplicate suppression.
+        if len(sent) > 200:
+            for old_key in sorted(sent.keys())[:-200]:
+                sent.pop(old_key, None)
+        save_admin_alerts(alerts)
+    return delivered
+
+
+def detect_and_alert_unfinished_previous_run(cfg: Dict[str, Any], current_run_id: str) -> None:
+    if not is_scheduled_run():
+        return
+    latest = load_supabase_state(SUPABASE_LATEST_RUN_LOG_KEY)
+    if not isinstance(latest, dict):
+        return
+
+    previous_run_id = str(latest.get("run_id") or "")
+    if not previous_run_id or previous_run_id == current_run_id:
+        return
+    if latest.get("finished_at") and latest.get("duration_seconds") is not None:
+        return
+    if latest.get("duplicate_skip") or latest.get("korean_public_holiday_skip"):
+        return
+
+    started_at = latest.get("started_at") or "(unknown)"
+    last_source = ""
+    sources = latest.get("sources") if isinstance(latest.get("sources"), list) else []
+    if sources:
+        source = sources[-1]
+        last_source = f"\n마지막 기록 소스: {source.get('name', '')} ({source.get('status', 'unknown')})"
+
+    text = (
+        "[IP Monitor 관리자 알림]\n"
+        "이전 정규 실행이 완료 기록 없이 중단됐습니다.\n"
+        f"run_id: {previous_run_id}\n"
+        f"started_at: {started_at}"
+        f"{last_source}\n"
+        "가능성이 높은 원인: Render OOM kill, 플랫폼 중단, 또는 강제 종료"
+    )
+    send_admin_alert_once("unfinished_run", previous_run_id, text, cfg)
+
+
+def run_daily_watchdog(cfg: Dict[str, Any], run_started: float, watchdog_run_id: str) -> int:
+    run_date = local_run_date(run_started)
+    latest = load_supabase_state(SUPABASE_LATEST_RUN_LOG_KEY)
+    latest_run_id = ""
+    latest_date = ""
+    finished = False
+    summary = {}
+    current_source = None
+
+    if isinstance(latest, dict):
+        latest_run_id = str(latest.get("run_id") or "")
+        latest_date = kst_date_from_run_log(latest) or ""
+        finished = bool(latest.get("finished_at") and latest.get("duration_seconds") is not None)
+        summary = latest.get("summary") if isinstance(latest.get("summary"), dict) else {}
+        current_source = latest.get("current_source") if isinstance(latest.get("current_source"), dict) else None
+
+    if latest_date == run_date and finished:
+        print(f"정규 실행 완료 확인: {latest_run_id}")
+        return 0
+
+    detail_lines = []
+    if not isinstance(latest, dict):
+        detail_lines.append("최신 실행 로그를 찾지 못했습니다.")
+    elif latest_date != run_date:
+        detail_lines.append(f"오늘 실행 로그가 없습니다. latest_run_id={latest_run_id or '(none)'}, latest_date={latest_date or '(unknown)'}")
+    else:
+        detail_lines.append(f"오늘 실행이 아직 완료되지 않았습니다. run_id={latest_run_id}")
+        detail_lines.append(f"started_at={latest.get('started_at') or '(unknown)'}")
+        if current_source:
+            detail_lines.append(
+                "current_source="
+                f"{current_source.get('index', '?')}/{current_source.get('total', '?')} "
+                f"{current_source.get('name', '')} ({current_source.get('mode', '')})"
+            )
+        elif isinstance(latest.get("sources"), list) and latest.get("sources"):
+            source = latest["sources"][-1]
+            detail_lines.append(f"last_source={source.get('name', '')} ({source.get('status', 'unknown')})")
+        if summary:
+            detail_lines.append(
+                "progress="
+                f"new:{summary.get('total_new_articles', 0)} "
+                f"ok:{summary.get('ok_sources', 0)} "
+                f"empty:{summary.get('empty_sources', 0)} "
+                f"fail:{summary.get('failed_sources', 0)}"
+            )
+
+    text = (
+        "[IP Monitor 관리자 알림]\n"
+        "07:25 KST 점검 결과, 07:00 정규 실행이 07:30 발송 전에 완료되지 않았습니다.\n"
+        f"watchdog_run_id: {watchdog_run_id}\n"
+        f"date: {run_date}\n"
+        + "\n".join(detail_lines)
+    )
+    sent = send_admin_alert_once("daily_watchdog", run_date, text, cfg)
+    print("관리자 watchdog 알림 전송" if sent else "관리자 watchdog 알림 미전송 또는 이미 전송됨")
+    return 1
+
+
+def run_test_admin_alert(cfg: Dict[str, Any], run_started: float, test_run_id: str) -> int:
+    text = (
+        "[IP Monitor 관리자 알림 테스트]\n"
+        "이 메시지가 보이면 관리자 DM 알림 설정이 정상입니다.\n"
+        f"run_id: {test_run_id}\n"
+        f"sent_at: {local_timestamp(run_started)}"
+    )
+    sent = send_admin_alert(text, cfg)
+    print("관리자 테스트 알림 전송 성공" if sent else "관리자 테스트 알림 전송 실패")
+    return 0 if sent else 1
+
+
 def should_skip_duplicate_scheduled_run(run_date: str) -> Optional[Dict[str, Any]]:
     if not is_scheduled_run():
         return None
@@ -1869,7 +2071,12 @@ def fetch_playwright(source: SourceConfig, timeout: int = 30000) -> List[Article
         headless = os.getenv("PLAYWRIGHT_HEADLESS", "true").lower() != "false"
         browser = p.chromium.launch(
             headless=headless,
-            args=["--disable-blink-features=AutomationControlled"],
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--no-sandbox",
+            ],
             ignore_default_args=["--enable-automation"]
         )
 
@@ -1881,6 +2088,15 @@ def fetch_playwright(source: SourceConfig, timeout: int = 30000) -> List[Article
         )
 
         page = context.new_page()
+        blocked_resource_types = {"image", "media", "font"}
+
+        def abort_heavy_resource(route):
+            request = route.request
+            if request.resource_type in blocked_resource_types:
+                return route.abort()
+            return route.continue_()
+
+        page.route("**/*", abort_heavy_resource)
 
         try:
             print(f"[DEBUG] 이동 전 page.url = {page.url}")
@@ -1926,7 +2142,19 @@ def fetch_playwright(source: SourceConfig, timeout: int = 30000) -> List[Article
                 print(f"[DEBUG] 실패 진단 중 추가 오류: {ee}")
             return []
         finally:
-            browser.close()
+            try:
+                page.close()
+            except Exception:
+                pass
+            try:
+                context.close()
+            except Exception:
+                pass
+            try:
+                browser.close()
+            except Exception:
+                pass
+            gc.collect()
 
         # ... (상단 브라우저 닫는 finally: browser.close() 블록 직후부터 끝까지) ...
 
@@ -3249,6 +3477,10 @@ class ClaudeClient:
    - topic_key는 영문 소문자 slug로 작성한다. 예: "2026-ustr-special-301-report", "uspto-gen-ai-patent-examination"
    - topic_label은 사람이 읽기 쉬운 짧은 이슈명으로 작성한다. 예: "USTR 2026 Special 301 Report"
    - 같은 이슈를 다른 매체가 보도한 경우 동일한 topic_key가 나오도록 일반적이고 안정적인 이름을 사용한다.
+   - topic_key는 기사 제목의 표현을 직역하지 말고, 실제 정책·법안·판례·보고서·기관 조치의 정체성을 기준으로 만든다.
+   - 같은 정책·제도·법안·판례가 한 기사에서는 시행시기, 다른 기사에서는 지원 목적이나 절차를 강조하더라도 동일한 topic_key를 사용한다.
+   - 한 기관 조치의 세부 효과를 다룬 후속 기사라면 별도 이슈로 분리하지 말고, 원 조치와 같은 topic_key를 사용한다.
+   - topic_key에는 가능하면 대상 지역/기관, 제도명, 조치 유형, 핵심 연도를 포함하고, 매체명이나 제목 고유 표현은 넣지 않는다.
 
 추가 규칙:
 - factual summary와 policy implication을 엄격히 분리하라. `summary_ko`와 `digest_bullets`에는 원문에 나타난 사실관계만 넣고, 정책적 시사점·평가·추론은 작성하지 마라.
@@ -3376,6 +3608,7 @@ DIGEST_TOPIC_STOPWORDS = {
     "releases", "report", "reports", "said", "says", "the", "their", "this",
     "through", "with", "year", "years",
     "관련", "기타", "동향", "발표", "보도", "분야", "정책", "제도",
+    "배경", "쟁점", "문제점", "향후일정", "변경사항", "결정", "조치",
 }
 
 
@@ -3528,6 +3761,48 @@ def digest_normalized_title_key(title: str) -> str:
     return key if len(key) >= 20 else ""
 
 
+KOREAN_TOPIC_SUFFIX_PATTERN = re.compile(
+    r"(으로서|으로써|으로부터|으로는|으로도|으로의|으로|에서|에게|에도|에는|"
+    r"과의|와의|과는|와는|과도|와도|까지|부터|보다|처럼|마다|"
+    r"하는|되는|시키는|하며|하고|되어|돼서|된다|했다|한다|"
+    r"이다|이며|이고|된다|된다|였다|하는|"
+    r"들을|으로|으로|를|을|이|가|은|는|과|와|의|도|만|로|에)$"
+)
+KOREAN_LOW_SIGNAL_TOPIC_TOKEN_PATTERN = re.compile(
+    r"(되었|됐다|된다|한다|했다|하며|하고|되어|돼서|있다|없다|"
+    r"것으로|위해|위한|대한|통해|따라|예정|목적|내용|사항)"
+)
+
+
+def topic_token_variants(token: str) -> set:
+    variants = {token}
+    if not token or token.isdigit():
+        return variants
+    if re.search(r"[가-힣]", token) and KOREAN_LOW_SIGNAL_TOPIC_TOKEN_PATTERN.search(token):
+        return set()
+
+    if re.search(r"[가-힣]", token):
+        stemmed = KOREAN_TOPIC_SUFFIX_PATTERN.sub("", token)
+        if len(stemmed) >= 2:
+            variants.add(stemmed)
+        for chunk in re.findall(r"[가-힣]+", stemmed):
+            for n in (2, 3, 4):
+                if len(chunk) >= n + 1:
+                    variants.update(chunk[i:i + n] for i in range(0, len(chunk) - n + 1))
+
+    if re.search(r"[\u3040-\u30ff\u3400-\u9fff]", token):
+        for chunk in re.findall(r"[\u3040-\u30ff\u3400-\u9fff]+", token):
+            for n in (2, 3, 4):
+                if len(chunk) >= n + 1:
+                    variants.update(chunk[i:i + n] for i in range(0, len(chunk) - n + 1))
+
+    return {
+        value
+        for value in variants
+        if value and value not in DIGEST_TOPIC_STOPWORDS and (len(value) >= 2 or value.isdigit())
+    }
+
+
 def digest_topic_token_set_from_text(text: str) -> set:
     normalized = normalize_topic_text(text or "")
     tokens = set()
@@ -3536,7 +3811,7 @@ def digest_topic_token_set_from_text(text: str) -> set:
             continue
         if len(token) < 3 and not token.isdigit():
             continue
-        tokens.add(token)
+        tokens.update(topic_token_variants(token))
     return tokens
 
 
@@ -3598,7 +3873,11 @@ def extract_digest_topic_keys(item: AnalyzedArticle) -> set:
 def extract_digest_topic_tokens(item: AnalyzedArticle) -> set:
     return digest_topic_token_set_from_text(" ".join([
         item.title or "",
+        getattr(item, "topic_key", "") or "",
         getattr(item, "topic_label", "") or "",
+        item.summary_ko or "",
+        " ".join(getattr(item, "digest_bullets", None) or []),
+        item.raw_excerpt or "",
     ]))
 
 
@@ -3619,7 +3898,9 @@ def digest_token_similarity_match(tokens: set, other_tokens: set) -> bool:
     union = tokens.union(other_tokens)
     jaccard = len(intersection) / len(union) if union else 0
     overlap = len(intersection) / min(len(tokens), len(other_tokens))
-    return len(intersection) >= 4 and (jaccard >= 0.35 or overlap >= 0.5)
+    if len(intersection) >= 4 and (jaccard >= 0.35 or overlap >= 0.5):
+        return True
+    return len(intersection) >= 8 and jaccard >= 0.06 and overlap >= 0.12
 
 
 def digest_recent_token_similarity_match(tokens: set, other_tokens: set) -> bool:
@@ -5330,16 +5611,18 @@ def main():
     skip_analysis = '--skip-analysis' in sys.argv
     cfg = load_config(config_path)
 
+    if '--test-admin-alert' in sys.argv:
+        sys.exit(run_test_admin_alert(cfg, run_started, run_id))
+
+    if '--daily-watchdog' in sys.argv:
+        sys.exit(run_daily_watchdog(cfg, run_started, run_id))
+
     if '--weekly-digest' in sys.argv or '--weekly-digest-sample' in sys.argv:
         sample_only = '--weekly-digest-sample' in sys.argv or '--no-telegram' in sys.argv
         sys.exit(run_weekly_digest(cfg, run_started, run_id, sample_only=sample_only))
 
+    detect_and_alert_unfinished_previous_run(cfg, run_id)
     sources = load_sources(cfg)
-
-    seen = load_seen()
-    existing_results = load_results()
-    existing_results_index = load_results_index()
-    already_analyzed = set(existing_results_index.keys())
 
     fetch_timeout = cfg.get('fetch', {}).get('timeout_seconds', 20)
     stale_article_days = int(cfg.get('fetch', {}).get('stale_article_days', 14) or 0)
@@ -5348,7 +5631,6 @@ def main():
     recent_topic_days = int(cfg.get('analysis', {}).get('recent_topic_days', 3) or 3)
 
     print(f'활성화된 소스 수: {len(sources)}')
-    print(f'기존 분석 완료 URL 수: {len(already_analyzed)}')
 
     # =========================================================
     # [추가 1] 테스트용 스위치 변수 설정
@@ -5392,6 +5674,9 @@ def main():
             "korean_holiday_cache": korean_holiday_cache_path(int(run_date_from_run_id(run_id)[:4])),
         },
         "summary": {
+            "admin_alert_enabled": admin_alert_enabled(cfg),
+            "admin_alert_sent": False,
+            "memory_usage_start_mb": memory_usage_mb(),
             "total_sources": len(sources),
             "total_fetched_articles": 0,
             "total_new_articles": 0,
@@ -5492,6 +5777,22 @@ def main():
         print(f'[DEBUG] 실행 로그 저장: {log_path}')
         return
 
+    start_log_path = save_run_log(run_log)
+    print(f'[DEBUG] 실행 시작 로그 저장: {start_log_path} (memory={memory_usage_label()})')
+
+    seen = load_seen()
+    existing_results = load_results()
+    existing_results_index = {
+        canonical_article_url(item.get("url")): item
+        for item in existing_results
+        if isinstance(item, dict) and item.get("url")
+    }
+    already_analyzed = set(existing_results_index.keys())
+    run_log["summary"]["seen_urls_loaded_count"] = len(seen)
+    run_log["summary"]["analysis_results_loaded_count"] = len(existing_results)
+    run_log["summary"]["analysis_results_index_count"] = len(already_analyzed)
+    print(f'기존 분석 완료 URL 수: {len(already_analyzed)}')
+
     new_articles: List[Article] = []
     source_check_records: List[Dict[str, Any]] = []
 
@@ -5517,6 +5818,16 @@ def main():
             "elapsed_seconds": None,
             "sample_articles": [],
         }
+        run_log["current_source"] = {
+            "index": source_idx,
+            "total": total_sources,
+            "name": src.name,
+            "mode": src.mode,
+            "started_at": local_timestamp(),
+            "memory_usage_mb": memory_usage_mb(),
+        }
+        if src.mode == "playwright":
+            save_run_log(run_log)
         try:
             arts = fetch_articles_for_source(src, timeout=fetch_timeout)
             for art in arts:
@@ -5539,6 +5850,12 @@ def main():
             source_log["error"] = str(e)
             source_log["elapsed_seconds"] = round(time.time() - source_started, 3)
             run_log["sources"].append(source_log)
+            run_log["current_source"]["status"] = "fail"
+            run_log["current_source"]["error"] = str(e)
+            run_log["current_source"]["elapsed_seconds"] = source_log["elapsed_seconds"]
+            run_log["current_source"]["memory_usage_mb"] = memory_usage_mb()
+            if src.mode == "playwright":
+                save_run_log(run_log)
             continue
 
         fresh = []
@@ -5588,6 +5905,12 @@ def main():
         source_log["elapsed_seconds"] = round(time.time() - source_started, 3)
         run_log["sources"].append(source_log)
         new_articles.extend(fresh)
+        run_log["current_source"]["status"] = source_log["status"]
+        run_log["current_source"]["elapsed_seconds"] = source_log["elapsed_seconds"]
+        run_log["current_source"]["memory_usage_mb"] = memory_usage_mb()
+        if src.mode == "playwright":
+            save_run_log(run_log)
+            gc.collect()
         time.sleep(1)
 
     run_log["summary"]["fetch_duration_seconds"] = round(time.time() - fetch_started, 3)
@@ -5854,10 +6177,56 @@ def main():
         print("Notion 관리자 대시보드 업데이트 실패:", e)
         run_log["notion_dashboard_error"] = str(e)
 
+    run_log["current_source"] = None
+    run_log["summary"]["memory_usage_finish_mb"] = memory_usage_mb()
     print('완료. results.json / telegram_digest.txt 생성(또는 갱신).')
     log_path = save_run_log(run_log)
     print(f'[DEBUG] 실행 로그 저장: {log_path}')
 
 
+def run_cli() -> int:
+    try:
+        main()
+        return 0
+    except SystemExit as e:
+        code = e.code if isinstance(e.code, int) else 0
+        if code:
+            try:
+                cfg = load_config('config.yaml')
+                run_id = local_run_id()
+                text = (
+                    "[IP Monitor 관리자 알림]\n"
+                    "실행이 비정상 종료됐습니다.\n"
+                    f"exit_code: {code}\n"
+                    f"detected_at: {local_timestamp()}\n"
+                    f"argv: {' '.join(sys.argv)}"
+                )
+                send_admin_alert_once("system_exit", run_id, text, cfg)
+            except Exception:
+                pass
+        return code
+    except BaseException as e:
+        cfg = {}
+        try:
+            cfg = load_config('config.yaml')
+        except Exception:
+            cfg = {"telegram": {"admin_alert_enabled": True}}
+
+        run_id = local_run_id()
+        tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+        text = (
+            "[IP Monitor 관리자 알림]\n"
+            "실행 중 처리되지 않은 예외가 발생했습니다.\n"
+            f"run_id: {run_id}\n"
+            f"detected_at: {local_timestamp()}\n"
+            f"error: {type(e).__name__}: {e}\n"
+            f"memory: {memory_usage_label()}\n"
+            f"argv: {' '.join(sys.argv)}\n\n"
+            f"{tb[-1800:]}"
+        )
+        send_admin_alert_once("uncaught_exception", run_id, text, cfg)
+        raise
+
+
 if __name__ == '__main__':
-    main()
+    sys.exit(run_cli())

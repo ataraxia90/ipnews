@@ -113,6 +113,7 @@ python monitor.py --skip-analysis --no-telegram --max-items-override 999
 ```yaml
 telegram:
   send_enabled: true
+  admin_alert_enabled: true
   review_send_enabled: true
   digest_send_enabled: true
   max_messages: 5

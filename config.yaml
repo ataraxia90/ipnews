@@ -26,6 +26,7 @@ analysis:
 
 telegram:
   send_enabled: true
+  admin_alert_enabled: true
   review_send_enabled: false
   digest_send_enabled: true
   max_messages: 20
