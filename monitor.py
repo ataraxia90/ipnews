@@ -5381,6 +5381,38 @@ def print_telegram_digest_from_state(run_date: Optional[str] = None) -> int:
     return 0
 
 
+def saved_digest_reference_date_from_args() -> Optional[str]:
+    if "--send-saved-digest" not in sys.argv:
+        return None
+    arg_index = sys.argv.index("--send-saved-digest")
+    if len(sys.argv) > arg_index + 1 and not sys.argv[arg_index + 1].startswith("--"):
+        return sys.argv[arg_index + 1]
+    return None
+
+
+def send_saved_telegram_digest_from_state(cfg: Dict[str, Any]) -> int:
+    run_date = saved_digest_reference_date_from_args()
+    payload = load_telegram_messages_state(SUPABASE_DIGEST_MESSAGE_KEY, run_date)
+    date_text = run_date or local_run_date()
+    if not payload:
+        print(f"저장된 digest 텔레그램을 찾지 못했습니다: {SUPABASE_DIGEST_MESSAGE_KEY}_{date_text.replace('-', '')}")
+        return 1
+
+    messages = payload.get("messages") or []
+    if not messages:
+        print("저장된 digest 텔레그램 메시지가 비어 있습니다.")
+        return 1
+
+    print(f"저장된 digest 발송: run_id={payload.get('run_id', '')}, run_date={payload.get('run_date', '')}, messages={len(messages)}")
+    send_telegram_message_chunks(
+        messages,
+        cfg,
+        chat_id_env="TELEGRAM_DIGEST_CHAT_ID",
+        enabled_key="digest_send_enabled",
+    )
+    return 0
+
+
 def telegram_send_enabled(cfg: Dict[str, Any], key: str) -> bool:
     if '--no-telegram' in sys.argv:
         return False
@@ -5616,6 +5648,9 @@ def main():
 
     if '--daily-watchdog' in sys.argv:
         sys.exit(run_daily_watchdog(cfg, run_started, run_id))
+
+    if '--send-saved-digest' in sys.argv:
+        sys.exit(send_saved_telegram_digest_from_state(cfg))
 
     if '--weekly-digest' in sys.argv or '--weekly-digest-sample' in sys.argv:
         sample_only = '--weekly-digest-sample' in sys.argv or '--no-telegram' in sys.argv
