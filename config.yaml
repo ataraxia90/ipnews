@@ -185,7 +185,7 @@ sources:
     homepage: https://www.thomsonreuters.com/
     monitor_url: "https://www.thomsonreuters.com/en/search-results#q=Patent&tab=All&sortCriteria=%40tr_wpublishedtime%20descending"
     mode: playwright
-    enabled: true
+    enabled: false
     priority: 1
     list_selector: 'a[href]'
     row_selector: '.dig-search-resultlist-default-container'
@@ -196,7 +196,7 @@ sources:
     homepage: https://www.thomsonreuters.com/
     monitor_url: "https://www.thomsonreuters.com/en/search-results#q=Trademark&tab=All&sortCriteria=%40tr_wpublishedtime%20descending"
     mode: playwright
-    enabled: true
+    enabled: false
     priority: 1
     list_selector: 'a[href]'
     row_selector: '.dig-search-resultlist-default-container'
